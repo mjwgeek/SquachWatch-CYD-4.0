@@ -32,8 +32,8 @@ enum class SettingsRow : uint8_t {
     RESET_STATS,
     SQUACHY_NAME,   // opens the payphone; SquachMesh builds only
     SQUACHMESH,     // announce ourselves to other SquachWatches
-    APPEARANCE,     // opens the APPEARANCE page: the display rows, and the aura
-    AURA,           // on the APPEARANCE page, once he is a Legend
+    APPEARANCE,     // opens the APPEARANCE page: the display rows, and the hat
+    TOP_HAT,        // on the APPEARANCE page, once he is a Legend
     SYSTEM,         // opens the SYSTEM page: calibrate, colours, diagnostics, reset
     WATCH_TARGET,   // "WATCHING: <name>", only while a watch is set. Taps clear it.
     HUNT_TARGET,    // "HUNTING: <name>", same deal
@@ -60,23 +60,18 @@ enum class SettingsRow : uint8_t {
     WATCH_IDLE_CPU,  // the T-Watch only: SLEEP CPU, the clock while the screen is asleep
     WATCH_BUZZ,      // the T-Watch only: buzz on an alert, OFF / HIGH / MED / LOW
     WATCH_SETTINGS,  // the T-Watch only: the row on the main list that opens the WATCH SETTINGS page
+    WATCH_RADIO_RESET, // the T-Watch only: power cycle the watch to wake the radios, under WATCH
+    WATCH_STEADY,    // the T-Watch only: STEADY POWER, DC1 held in PWM, under WATCH
     WATCH_TEMP,      // the T-Watch only: the chip's temperature, a reading, under WATCH
-    WATCH_WARDRIVE,  // the T-Watch only: WARDRIVE, every network and device with where, for WiGLE
-    WATCH_QUIET_TAGS, // the T-Watch only: TAGS + RINGS, logged without waking the watch
-    WATCH_LORA,      // the T-Watch only: LORA, which networks the LoRa radio listens to
-    WATCH_LORA_CHATS, // the T-Watch only: LORA CHATS, what it decoded, one chat per network
+    WATCH_XTAL,      // the T-Watch only: CLOCK CHECK, the ESP32's crystal against the clock chip's
 #if defined(CROWPANEL7)
     BUZZER,          // the CrowPanel 7 only, the one board with a buzzer: OFF, or NEW ONLY
 #endif
-#if SQW_WIFI_5G
-    WIFI_BANDS,      // a chip with 5 GHz only (the NM-CYD-C5): 2.4+5, or 2.4
+    BOARD_BATTERY,   // Freenove S3 / CYD40: cell voltage and estimated %, on SYSTEM
+#if defined(CYD40)
+    SOUND_ALERTS,    // CYD40 speaker: audible detection chirps
+    SOUND_VOLUME,    // CYD40 speaker volume
 #endif
-    BOARD_BATTERY,   // the Freenove S3 only: the cell's voltage, on the SYSTEM page
-    CHARGE_MODE,     // the CYD boards: radios and screen off so a battery charges faster
-    LAST_RUN,        // the CYD boards: how long the previous boot ran, on the SYSTEM page
-    PRIVACY,         // PRIVACY MODE: addresses and names masked on screen, on the SYSTEM page
-    EXT_SCREEN,      // the Cardputer ADV only: a second panel on the EXT header
-    DET_STYLE,       // on the APPEARANCE page: XP or CLASSIC detection counters
     BACK,
     COUNT,
     NONE = 255
@@ -100,6 +95,11 @@ SettingsPage uiSettingsCurrentPage();
 // Kept so existing callers read the same. APPEARANCE only.
 void uiSettingsOpenAppearance(bool open);
 
+// A tap on a group heading folds that group away, turning a list that runs
+// four screens deep into a short menu. Returns true if (x,y) hit a heading and
+// the fold was toggled, in which case the tap is spent -- call this BEFORE
+// uiSettingsHitTest().
+bool uiSettingsTapHeader(TFT_eSPI& t, int x, int y, int screenW, int screenH);
 
 // True when a mode has switched this row off (boring mode, today). A tap on
 // one says why rather than silently doing nothing.
