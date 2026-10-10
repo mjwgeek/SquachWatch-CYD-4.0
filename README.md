@@ -1,32 +1,27 @@
-# SquachWatch-CYD
+# SquachWatch-CYD 4.0 — Hosyond CYD40
 
-> Surveillance-device detector for the ESP32-2432S028R ("Cheap Yellow Display"), and a growing list of other ESP32 boards.
+## ⚡ Flash your Hosyond 4.0" CYD in Chrome
 
-SquachWatch-CYD sniffs WiFi and Bluetooth for known wireless signatures
-of Flock Safety cameras, Axon body cameras, recording glasses, card
-skimmers, AirTags, drones, proximity beacons and pentest hardware. On the
-2.8" CYD it listens on 2.4 GHz and runs standalone on the bare board — no
-PC, no extras, just plug it into USB. A few other boards hear more: the
-NM-CYD-C5 scans 5 GHz as well, and the T-Watch S3 listens to LoRa, with GPS
-on the S3 Plus (see [Boards](#boards)).
+### **[➡️ OPEN THE CYD40 WEB FLASHER](https://mjwgeek.github.io/SquachWatch-CYD-4.0/)**
 
-The UI is a vaporwave-themed take on the **SquachWare** aesthetic: matrix
-digital rain, Squachy the mascot, full-screen dramatic ALERT overlays, and
-the glitchy SquachWatch wordmark.
+**No software installation required.** Plug your ESP32-based Hosyond/LCDWiki 4.0-inch Cheap Yellow Display into USB, open the link in **desktop Chrome or Edge**, choose your serial port, and flash.
 
-<p align="center">
-  <a href="https://squachwatch.com/emulator/" title="Drive it in your browser">
-    <img src="docs/demo.gif" width="640"
-         alt="SquachWatch booting, Squachy in the VOID EYE costume on the synthwave sunset, a Flock camera detection card, his reaction to it, and a visiting SquachWatch walking on to say hello">
-  </a>
-</p>
+| Firmware | Display SPI | Recommended for |
+| --- | --- | --- |
+| **CYD40 Standard** | 40 MHz | Best starting point / display compatibility |
+| **CYD40 Fast** | 80 MHz | Boards known to run reliably at higher speed |
 
-<p align="center">
-  <b>That is the firmware itself, not a mockup.</b><br>
-  Every frame above was rendered by the same C++ that runs on the board,
-  compiled for a PC.<br>
-  <a href="https://squachwatch.com/emulator/"><b>Click it to drive it in your browser &rarr;</b></a>
-</p>
+**Hardware:** ESP32-32E / E32R40T-class, 320×480 ST7796S display, XPT2046 resistive touch. Includes optional speaker alerts (GPIO26 DAC / GPIO4 amp), saved LOW/MED/HIGH/MAX volume, on-screen SND/MUT, and battery monitoring (GPIO34). Boards without a fitted speaker or battery can still be USB-powered; absent hardware is not automatically detected.
+
+**Build status:** [CYD40 firmware builds](https://github.com/mjwgeek/SquachWatch-CYD-4.0/actions/workflows/hosyond-cyd40.yml) · [Web flasher deployment](https://github.com/mjwgeek/SquachWatch-CYD-4.0/actions/workflows/pages-hosyond.yml) · [CYD40 port details](HOSYOND_CYD40.md)
+
+> **Compatibility:** This build is for the Hosyond/LCDWiki **4.0-inch CYD40** pinout, not interchangeable with every other CYD variant. The automated build succeeded, but verify operation on your own board before relying on the firmware. Keep a backup of existing flash data if it matters.
+
+## About this fork
+
+This repository is a Hosyond 4.0-inch hardware port of [skizzophrenic/SquachWatch-CYD](https://github.com/skizzophrenic/SquachWatch-CYD). All CYD40 modifications and the web flasher are maintained here, separately from the original project.
+
+SquachWatch scans for known Wi-Fi and Bluetooth signatures associated with surveillance devices and other wireless equipment. This fork prioritizes the **physical 4.0-inch device firmware**, not desktop emulation.
 
 ## What it detects
 
@@ -73,17 +68,20 @@ otherwise see all week. It is one tap away in `TYPE FILTER`.
 
 ## Boards
 
+**This fork's primary target is the Hosyond / LCDWiki 4.0-inch CYD40.** The table below describes upstream board variants, not additional choices in this fork's web flasher.
+
+
 Not sure which to buy? The **2.8" CYD** (ESP32-2432S028R) is about $15 and
 is the board everything here is designed on: built-in 320×240 TFT,
 resistive touch, a microSD slot and an RGB light, and nothing else to add.
-No GPS, no extra modules; the board is the whole device. Every board below
-is on the [web flasher](https://squachwatch.com/). BETA means it runs the
+No GPS, no extra modules; the board is the whole device. For this fork, the supported browser installation target is the **Hosyond 4.0-inch CYD40** at [our web flasher](https://mjwgeek.github.io/SquachWatch-CYD-4.0/). Other boards are documented from the upstream project, but are not offered by this fork's Chrome flasher. BETA means it runs the
 whole firmware but has had fewer hours on it. The longer answer is in
 [docs/FAQ.md](docs/FAQ.md).
 
-| Board | Flasher | Worth knowing |
+| Board | Upstream support | Worth knowing |
 |---|---|---|
-| 2.8" CYD — ESP32-2432S028R | Yes | Ships with an ST7789 or an ILI9341 screen depending on the batch, and the flasher has both. A solid white screen means try the other one |
+| 4.0" Hosyond / LCDWiki CYD40 — E32R40T | **[Flash here](https://mjwgeek.github.io/SquachWatch-CYD-4.0/)** | ST7796S 320×480, XPT2046 touch; optional audio and battery monitor |
+| 2.8" CYD — ESP32-2432S028R | Upstream | Ships with an ST7789 or an ILI9341 screen depending on the batch, and the flasher has both. A solid white screen means try the other one |
 | 3.2" capacitive — ESP32-2432S032C | Yes | IPS screen, capacitive touch |
 | 3.2" resistive — Freenove FNK0103 | Yes | IPS screen |
 | RL Phantom 2.4" — ESP32-2432S024R | Yes | Status light on the front |
@@ -102,38 +100,23 @@ what is and is not confirmed on it.
 
 ## Web Flash
 
-No build tools, no IDE, no cloning anything — flash a board straight
-from your browser:
+**[➡️ Flash the Hosyond 4.0-inch CYD in Chrome](https://mjwgeek.github.io/SquachWatch-CYD-4.0/)**
 
-**[https://squachwatch.com/](https://squachwatch.com/)**
+Requires desktop Chrome or Edge with Web Serial and a USB data cable. Select **Standard (40 MHz)** or **Fast (80 MHz)**. This repository's GitHub Actions workflow compiles the images and publishes them to GitHub Pages only after successful compilation.
 
-Works in Firefox, Chrome, Edge, or Brave on desktop. Pick your board from
-the list (it is grouped by family, and there is a box for the code printed
-on the back if you are not sure which you have), plug in, click Connect &
-Install, done. A T-Watch has its clock set for it once the install
-finishes.
+## Build locally (optional)
 
-## Build
+The web flasher above is the easiest way to install. To build from this fork with PlatformIO:
 
-Three steps:
+```sh
+git clone https://github.com/mjwgeek/SquachWatch-CYD-4.0.git
+cd SquachWatch-CYD-4.0
+pio run -e cyd40
+# or:
+pio run -e cyd40-fast
+```
 
-1. Install [PlatformIO](https://platformio.org/) (CLI or VS Code extension).
-2. Clone the repo:
-   ```sh
-   git clone https://github.com/skizzophrenic/SquachWatch-CYD
-   cd SquachWatch-CYD
-   ```
-3. Build and flash:
-   ```sh
-   pio run -t upload
-   ```
-   For a board that is not the default three, name its build, e.g.
-   `pio run -e freenove-s3 -t upload`.
-
-The first build pulls the TFT_eSPI, XPT2046, and NimBLE-Arduino
-libraries; after that it's incremental.
-
-A full beginner-friendly walkthrough is in [docs/BUILD.md](docs/BUILD.md).
+To upload over USB with PlatformIO, use `pio run -e cyd40-fast -t upload` and choose your connected device port as needed. The CI workflows also produce firmware binaries for both environments.
 
 ## Updating
 
@@ -606,15 +589,7 @@ SquachWatch-CYD/
 │   ├── sd_log.cpp
 │   └── ui_*.cpp
 ├── test/                         (host tests -- `make -C test`, no framework)
-└── sim/                          (PC emulator — compiles src/ natively)
-    ├── Makefile                  (`make` for the CLI, `make wasm` for the web build)
-    ├── *.h                       (Arduino/TFT_eSPI/NVS shims)
-    ├── make_readme_demo.py       (renders the animation at the top of this file)
-    ├── make_demo.py              (the older background tour)
-    ├── make_mesh_demo.py         (renders the SquachMesh clip above)
-    ├── make_gallery.py           (renders the outfit sheet above)
-    ├── make_social.py            (renders the repo's social preview card)
-    └── web/                      (the browser build)
+└── webflasher/                   (Chrome USB flasher page)
 ```
 
 ## License
@@ -642,7 +617,6 @@ SquachWatch-CYD/
 - Freenove ESP32-S3 Display 2.8" port: **greasy-electronics**.
 - Freenove 3.2" pin work: **DevOpsDAdams**.
 - 3.5" capacitive (ESP32-3248S035C) build: **VV-B0Y**.
-- The emulator building on macOS, and its incremental build: **aroth**.
 - Testing every single build, boot loops and green skies included: **Houdini**.
 - Bug reports that found real bugs: **rrahmani** (Remote ID never caught a
   real drone; photos and a diagnosis of the 3.5" drawing half its screen
@@ -652,9 +626,7 @@ SquachWatch-CYD/
 
 ## Status
 
-**Shipping.** Releases are cut by pushing a `v*.*.*` tag; the flasher above
-is rebuilt and redeployed by the same CI run, so the web flasher always
-matches the newest release.
+**CYD40 fork:** The `cyd40` and `cyd40-fast` firmware targets are built through GitHub Actions. The Chrome flasher publishes from this fork's `master` branch when its dedicated build-and-deploy workflow succeeds.
 
 Detection is reliable for the high-priority targets (Flock, Axon, skimmer,
 camera glasses). Remote ID and iBeacon are exact-format matches. Raven,
@@ -662,7 +634,4 @@ generic ALPR and the Google tracker network are best-effort — see
 [docs/DETECTIONS.md](docs/DETECTIONS.md) for per-signature provenance and
 the confidence each one earns.
 
-Verified on real hardware. There is also a PC emulator in `sim/` that
-compiles the actual `src/` against shims, and a host test suite in `test/`
-(`make -C test`) covering the decoders, the signature tables and the
-emulator's own fidelity to the display library.
+The Hosyond 4.0-inch port compiles in GitHub Actions. Physical testing on the target board is still required to verify its display, touch, audio and battery behavior.
