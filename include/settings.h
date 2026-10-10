@@ -252,6 +252,10 @@ namespace Settings {
     bool        buzzerOn();
     void        toggleBuzzer();
 
+    // Preserve new upstream LoRa channel persistence used by lora_channels.cpp.
+    size_t loraChannels(uint8_t* out, size_t cap);
+    bool setLoraChannels(const uint8_t* rec, size_t n);
+
     // ---- STATUS LIGHT ----------------------------------------------------
     // The RGB LED on the back of the 2.8" CYD. See status_light.h for the
     // rules it follows; these are only the knobs. Every one of them is

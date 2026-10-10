@@ -295,6 +295,19 @@ void toggleWakeOnAlert() {
 bool buzzerOn()     { return s_buzzer; }
 void toggleBuzzer() { s_buzzer = !s_buzzer; s_prefs.putBool("buzzer", s_buzzer); }
 
+// LoRa channel persistence from upstream, retained alongside CYD40 preferences.
+size_t loraChannels(uint8_t* out, size_t cap) {
+    if (!out || !cap) return 0;
+    size_t len = s_prefs.getBytesLength("loraChans");
+    if (!len) return 0;
+    if (len > cap) len = cap;
+    return s_prefs.getBytes("loraChans", out, len);
+}
+bool setLoraChannels(const uint8_t* rec, size_t n) {
+    if (!rec || !n) { s_prefs.remove("loraChans"); return true; }
+    return s_prefs.putBytes("loraChans", rec, n) == n;
+}
+
 // ---- easter-egg hunt progress ----------------------------------------
 // Packed into one NVS entry rather than one each: the store has a few
 // hundred entries free and this is not where they should go.

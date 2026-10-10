@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SquachWatch Hosyond 4.0 Flasher</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10.1.1/dist/web/install-button.js"></script>
+<style>body{font:16px system-ui,sans-serif;background:#101827;color:#f5f8ff;max-width:720px;margin:6vh auto;padding:24px;line-height:1.6}h1{line-height:1.2}section{padding:20px;margin:16px 0;background:#1c2940;border-radius:14px}a{color:#96c8ff}small{color:#c4d0de}esp-web-install-button button{border:0;border-radius:10px;background:#57aeff;color:#091626;font-weight:700;font-size:17px;padding:12px 20px;cursor:pointer}</style></head><body>
+<h1>SquachWatch · Hosyond 4.0 CYD</h1>
+<p>Flash the ESP32-based ST7796S 320×480 board directly from desktop Chrome or Edge using a USB data cable. Firmware includes speaker, battery indicator, sound volume, and the on-screen mute control.</p>
+<section><h2>Standard · 40 MHz</h2><p>Recommended starting point for display stability.</p><esp-web-install-button manifest="firmware/cyd40/manifest.json"><button slot="activate">Connect &amp; flash standard</button><span slot="unsupported">Use desktop Chrome or Edge with Web Serial.</span><span slot="not-allowed">Web Serial needs a secure HTTPS page.</span></esp-web-install-button></section>
+<section><h2>Fast · 80 MHz</h2><p>Experimental faster LCD bus; may cause display issues on some boards.</p><esp-web-install-button manifest="firmware/cyd40-fast/manifest.json"><button slot="activate">Connect &amp; flash fast</button><span slot="unsupported">Use desktop Chrome or Edge with Web Serial.</span><span slot="not-allowed">Web Serial needs a secure HTTPS page.</span></esp-web-install-button></section>
+<p><strong>Before flashing:</strong> disconnect other serial monitors, select your CYD USB serial port when Chrome asks, and keep power connected. The partition layout and bootloader are included for initial installs. Keep a backup of settings; flash layout migrations can erase stored data.</p>
+<small>Images are only published after GitHub Actions successfully compiles both firmware variants. <a href="https://github.com/mjwgeek/SquachWatch-CYD-4.0">Source code</a> · <a href="https://github.com/mjwgeek/SquachWatch-CYD-4.0/actions">Build status</a></small>
+</body></html>
