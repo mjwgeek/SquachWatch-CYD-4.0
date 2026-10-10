@@ -135,6 +135,8 @@ namespace Settings {
     void       toggleRotationLock();
 
     // The Legend's aura: lit unless put out on the APPEARANCE page.
+    bool       topHatShown();
+    void       toggleTopHat();
     bool       auraShown();
     void       toggleAura();
     // DETECTIONS on the APPEARANCE page: XP (the counter buttons across the

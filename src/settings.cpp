@@ -39,6 +39,7 @@ static const bool DEFAULT_ROTATION_LOCK = true;
 static const bool DEFAULT_ROTATION_LOCK = false;
 #endif
 static bool        s_rotationLocked = DEFAULT_ROTATION_LOCK;
+static bool        s_topHat = true;
 static bool        s_aura = true;
 static bool        s_detXp = true;
 // Eight is the ceiling because the radio's own squad ring holds eight (see
@@ -480,6 +481,7 @@ void load() {
     s_rotationLocked = s_prefs.getBool("rotlock", DEFAULT_ROTATION_LOCK);
     // A new key, not the top hat's: somebody who took the hat off never said
     // anything about the aura, and should see it once before deciding.
+    s_topHat = s_prefs.getBool("tophat", true);
     s_aura           = s_prefs.getBool("aura", true);
     s_detXp          = s_prefs.getBool("detxp", true);
     s_rotation = s_prefs.getUChar("rot", DEFAULT_ROTATION);
@@ -751,6 +753,9 @@ void markPocketNoteShown() {
     s_pocketNoteShown = true;
     s_prefs.putBool("pocketnote", true);
 }
+
+bool topHatShown() { return s_topHat; }
+void toggleTopHat() { s_topHat = !s_topHat; s_prefs.putBool("tophat", s_topHat); }
 
 bool auraShown() { return s_aura; }
 
