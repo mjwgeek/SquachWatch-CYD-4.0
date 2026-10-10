@@ -135,6 +135,8 @@ namespace Settings {
     void       toggleRotationLock();
 
     // The Legend's aura: lit unless put out on the APPEARANCE page.
+    bool       topHatShown();
+    void       toggleTopHat();
     bool       auraShown();
     void       toggleAura();
     // DETECTIONS on the APPEARANCE page: XP (the counter buttons across the
@@ -357,6 +359,15 @@ namespace Settings {
     void        toggleLight();
     bool        lightAlerts();           // detection flashes
     void        toggleLightAlerts();
+#if defined(CYD40)
+    // Audible detection chirps on the CYD40 speaker. Independent of the RGB
+    // light so the quick mute never changes visual alerts.
+    bool        soundAlerts();
+    void        toggleSoundAlerts();
+    uint8_t     soundVolume();       // 0 LOW, 1 MED, 2 HIGH, 3 MAX
+    const char* soundVolumeName();
+    void        cycleSoundVolume();
+#endif
     bool        lightMessages();         // the unread blink, and squad visits
     void        toggleLightMessages();
     uint8_t     lightIdle();             // 0 OFF, 1 BREATHE, 2 SOLID

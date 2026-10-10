@@ -39,6 +39,7 @@ static const bool DEFAULT_ROTATION_LOCK = true;
 static const bool DEFAULT_ROTATION_LOCK = false;
 #endif
 static bool        s_rotationLocked = DEFAULT_ROTATION_LOCK;
+static bool        s_topHat = true;
 static bool        s_aura = true;
 static bool        s_detXp = true;
 // Eight is the ceiling because the radio's own squad ring holds eight (see
@@ -186,6 +187,10 @@ static bool     s_loraLkFeed   = false;
 // ---- status light --------------------------------------------------------
 static bool    s_lightOn     = true;
 static bool    s_lightAlerts = true;
+#if defined(CYD40)
+static bool    s_soundAlerts = true;
+static uint8_t s_soundVolume = 1;   // MED
+#endif
 static bool    s_lightMsgs   = true;
 static uint8_t s_lightIdle   = 1;    // BREATHE
 static uint8_t s_lightColor  = 0;    // THEME
@@ -476,6 +481,7 @@ void load() {
     s_rotationLocked = s_prefs.getBool("rotlock", DEFAULT_ROTATION_LOCK);
     // A new key, not the top hat's: somebody who took the hat off never said
     // anything about the aura, and should see it once before deciding.
+    s_topHat = s_prefs.getBool("tophat", true);
     s_aura           = s_prefs.getBool("aura", true);
     s_detXp          = s_prefs.getBool("detxp", true);
     s_rotation = s_prefs.getUChar("rot", DEFAULT_ROTATION);
@@ -560,6 +566,11 @@ void load() {
     s_loraLkFeed   = s_prefs.getBool("loraLkMcF", false);
     s_lightOn      = s_prefs.getBool("ltOn", true);
     s_lightAlerts  = s_prefs.getBool("ltAlert", true);
+#if defined(CYD40)
+    s_soundAlerts  = s_prefs.getBool("sndAlert", true);
+    s_soundVolume  = s_prefs.getUChar("sndVol", 1);
+    if (s_soundVolume > 3) s_soundVolume = 1;
+#endif
     s_lightMsgs    = s_prefs.getBool("ltMsg", true);
     s_lightIdle    = s_prefs.getUChar("ltIdle", 1);
     s_banter       = s_prefs.getUChar("banter", 2);
@@ -743,6 +754,9 @@ void markPocketNoteShown() {
     s_prefs.putBool("pocketnote", true);
 }
 
+bool topHatShown() { return s_topHat; }
+void toggleTopHat() { s_topHat = !s_topHat; s_prefs.putBool("tophat", s_topHat); }
+
 bool auraShown() { return s_aura; }
 
 bool detXp() { return s_detXp; }
@@ -780,6 +794,18 @@ void toggleBackgroundLocked() {
 
 bool        lightOn()         { return s_lightOn; }
 bool        lightAlerts()     { return s_lightAlerts; }
+#if defined(CYD40)
+bool        soundAlerts()     { return s_soundAlerts; }
+uint8_t     soundVolume() { return s_soundVolume; }
+const char* soundVolumeName() {
+    static const char* const N[] = { "LOW", "MED", "HIGH", "MAX" };
+    return N[s_soundVolume < 4 ? s_soundVolume : 1];
+}
+void cycleSoundVolume() {
+    s_soundVolume = (uint8_t)((s_soundVolume + 1) % 4);
+    s_prefs.putUChar("sndVol", s_soundVolume);
+}
+#endif
 bool        lightMessages()   { return s_lightMsgs; }
 uint8_t     lightIdle()       { return s_lightIdle; }
 uint8_t     lightColor()      { return s_lightColor; }
@@ -788,6 +814,9 @@ const char* lightIdleName()   { return LIGHT_IDLE_NAMES[s_lightIdle > 2 ? 1 : s_
 const char* lightColorName()  { return LIGHT_COLOR_NAMES[s_lightColor < LIGHT_COLOR_N ? s_lightColor : 0]; }
 void toggleLight()         { s_lightOn = !s_lightOn;         s_prefs.putBool("ltOn", s_lightOn); }
 void toggleLightAlerts()   { s_lightAlerts = !s_lightAlerts; s_prefs.putBool("ltAlert", s_lightAlerts); }
+#if defined(CYD40)
+void toggleSoundAlerts()   { s_soundAlerts = !s_soundAlerts; s_prefs.putBool("sndAlert", s_soundAlerts); }
+#endif
 void toggleLightMessages() { s_lightMsgs = !s_lightMsgs;     s_prefs.putBool("ltMsg", s_lightMsgs); }
 void cycleLightIdle()      { s_lightIdle = (uint8_t)((s_lightIdle + 1) % 3);            s_prefs.putUChar("ltIdle", s_lightIdle); }
 uint8_t     banter()       { return s_banter; }
