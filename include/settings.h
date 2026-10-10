@@ -130,6 +130,10 @@ namespace Settings {
     void       toggleRotationLock();
 
     // The Legend top hat: worn unless taken off on the APPEARANCE page.
+    bool       auraShown();
+    void       toggleAura();
+    bool       meshHeadsUp();
+    void       toggleMeshHeadsUp();
     bool       topHatShown();
     void       toggleTopHat();
 

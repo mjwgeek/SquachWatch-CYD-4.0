@@ -36,6 +36,10 @@ static const bool DEFAULT_ROTATION_LOCK = true;
 static const bool DEFAULT_ROTATION_LOCK = false;
 #endif
 static bool        s_rotationLocked = DEFAULT_ROTATION_LOCK;
+static bool        s_aura = true;
+#if SQUACH_MESH
+static bool        s_meshHeadsUp = true;
+#endif
 static bool        s_topHat = true;
 // Eight is the ceiling because the radio's own squad ring holds eight (see
 // SQUAD_N in mesh.cpp). A menu that offered thirty would be offering something
@@ -308,6 +312,16 @@ bool setLoraChannels(const uint8_t* rec, size_t n) {
     return s_prefs.putBytes("loraChans", rec, n) == n;
 }
 
+bool auraShown() { return s_aura; }
+void toggleAura() { s_aura = !s_aura; s_prefs.putBool("aura", s_aura); }
+#if SQUACH_MESH
+bool meshHeadsUp() { return s_meshHeadsUp; }
+void toggleMeshHeadsUp() { s_meshHeadsUp = !s_meshHeadsUp; s_prefs.putBool("headsup", s_meshHeadsUp); }
+#else
+bool meshHeadsUp() { return false; }
+void toggleMeshHeadsUp() {}
+#endif
+
 // ---- easter-egg hunt progress ----------------------------------------
 // Packed into one NVS entry rather than one each: the store has a few
 // hundred entries free and this is not where they should go.
@@ -372,6 +386,10 @@ void load() {
 #endif
     s_infoPrimerShown = s_prefs.getBool("infoprimer", false);
     s_rotationLocked = s_prefs.getBool("rotlock", DEFAULT_ROTATION_LOCK);
+    s_aura = s_prefs.getBool("aura", true);
+#if SQUACH_MESH
+    s_meshHeadsUp = s_prefs.getBool("headsup", true);
+#endif
     s_topHat         = s_prefs.getBool("tophat", true);
     s_rotation = s_prefs.getUChar("rot", DEFAULT_ROTATION);
     if (s_rotation > 3) s_rotation = DEFAULT_ROTATION;
