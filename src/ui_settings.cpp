@@ -335,7 +335,7 @@ static uint8_t buildDisplayList(DisplayItem* out) {
         // seen would give the secret away -- and a switch for a hat he is
         // not wearing yet would be a switch that does nothing.
         if (r == SettingsRow::PET && !Squachy::petUnlocked()) continue;
-        if (r == SettingsRow::TOP_HAT && !Squachy::hasTopHat()) continue;
+        if (r == SettingsRow::TOP_HAT && !Squachy::hasAura()) continue;
         // Not a secret, just impossible: a board without a second app slot or
         // a Bluetooth server has nothing to update into.
         if ((r == SettingsRow::UPDATE_FIRMWARE || r == SettingsRow::UPDATE_CHECK) && !OtaCore::available()) continue;
