@@ -1528,6 +1528,16 @@ static void enterInvite() {
 }
 
 // INVERT and ROT on the console -- see clock.cpp. Consumed in loop().
+volatile bool g_consoleAdc=false, g_consoleXyzzy=false, g_consoleClippy=false, g_consoleToaster=false;
+volatile bool g_consoleBall=false, g_consolePet=false, g_consoleJail=false, g_consoleFree=false;
+volatile uint8_t g_consoleHeadsUp=0;
+volatile bool g_consoleLegend=false, g_consoleOutfitSet=false, g_consoleAura=false;
+volatile int8_t g_consoleOutfit=-1;
+volatile bool g_consolePins=false, g_consoleI2c=false;
+volatile uint8_t g_consoleGps=0;
+volatile int32_t g_consoleFakeLat7=0, g_consoleFakeLon7=0;
+volatile bool g_consoleCharge=false;
+
 volatile bool g_consoleInvert = false;
 volatile bool g_consoleRotate = false;
 volatile bool g_consoleWatchTest = false; // WATCHTEST: watch the newest Bluetooth device, fire its alert
