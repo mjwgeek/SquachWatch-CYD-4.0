@@ -24,6 +24,8 @@ concurrency:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    env:
+      SQW_VERSION: 2.0.${{ github.run_number }}
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -50,7 +52,7 @@ jobs:
           d,env=sys.argv[1:]
           manifest={
             "name":"SquachWatch Hosyond 4.0 ("+env+")",
-            "version":"CYD40",
+            "version":__import__("os").environ["SQW_VERSION"],
             "new_install_prompt_erase":False,
             "builds":[{
               "chipFamily":"ESP32",
@@ -64,6 +66,22 @@ jobs:
           with open(d+"/manifest.json","w") as f:json.dump(manifest,f,indent=2)
           PY
           done
+      - name: Prepare fork-owned signed Wi-Fi OTA files
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          if [ -z "$OTA_SIGNING_KEY" ]; then
+            echo "::warning::OTA_SIGNING_KEY secret is missing; USB web flasher works, but Wi-Fi OTA is not enabled."
+            exit 0
+          fi
+          umask 077
+          printf '%s\n' "$OTA_SIGNING_KEY" > "$RUNNER_TEMP/cyd40_ota_key.pem"
+          for env in cyd40 cyd40-fast; do
+            cp ".pio/build/$env/firmware.bin" "_site/$env-firmware.bin"
+            python tools/sign_firmware.py --key "$RUNNER_TEMP/cyd40_ota_key.pem" --env "$env" --bin "_site/$env-firmware.bin" --out "_site/$env-firmware.sig"
+            cp "_site/firmware/$env/manifest.json" "_site/manifest-$env.json"
+          done
+          rm -f "$RUNNER_TEMP/cyd40_ota_key.pem"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
