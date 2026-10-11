@@ -1723,6 +1723,186 @@ static bool    s_watchPillOn = false;
 // top band covers the clock rather than the clock cutting a hole in the
 // bubble. Returns where the WATCH pill's free span must end, or -1.
 static int16_t s_cornerClockPillR = -1;
+
+// ---- the battery gauge: a lava lamp -------------------------------------------
+// Picked from the battery lab (2026-10-10): a vaporwave lava lamp under the
+// menu icon, filled to the charge, with no box behind it -- a one-pixel
+// outline traced round its shape instead, glowing the lava's colour beside
+// the lit glass. Blobs rise and sink; on the cable they bubble faster and the
+// lamp brightens, bubbles stream up, its glowing edge beats and a rainbow
+// scrolls through the cap and base; under 10% it
+// flickers like a dying bulb; full, it twinkles.
+// The lava drifts pink -> purple -> cyan, the theme's own colours.
+//
+// The art is 11 x 19 "pixels", doubled on the 3.5in. It is built in a small
+// grid first, so the outline can be traced round whatever got drawn, and then
+// goes on the screen as runs -- about 40 fillRects a frame, not 300.
+static BatterySource s_battSrc = nullptr;
+void uiClearSetBatterySource(BatterySource fn) { s_battSrc = fn; }
+
+static float lampHash(uint32_t a, uint32_t b) {
+    uint32_t h = (a * 374761393u + b * 668265263u) ^ 0x5bd1e995u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return (float)(h ^ (h >> 16)) / 4294967295.0f;
+}
+
+// Full-strength colour at `deg` round the colour wheel, 0..359.
+static uint16_t lampRainbow(uint16_t deg) {
+    const uint8_t f = (uint8_t)((deg % 60) * 255 / 60);
+    uint8_t r, g, b;
+    switch (deg / 60) {
+        case 0:  r = 255;     g = f;       b = 0;       break;
+        case 1:  r = 255 - f; g = 255;     b = 0;       break;
+        case 2:  r = 0;       g = 255;     b = f;       break;
+        case 3:  r = 0;       g = 255 - f; b = 255;     break;
+        case 4:  r = f;       g = 0;       b = 255;     break;
+        default: r = 255;     g = 0;       b = 255 - f; break;
+    }
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+}
+
+// Where the lamp goes: s is the size of one art pixel, (ox, oy) its top left.
+// Small screens: under the menu icon, centred in the space left of the
+// counters. The 3.5in draws it triple size (asked for 2026-10-10), under the
+// menu icon in both orientations. Portrait's two-line speech bubble overlaps
+// the side of the glass, and that is wanted: the bubble is drawn later and
+// sits on top, like any other bubble over the background.
+static void lampPlace(TFT_eSPI& t, int& s, int& ox, int& oy) {
+    oy = Theme::TITLE_ICON_BAND_H + 3;
+    if (!Theme::large()) { s = 1; ox = 17; return; }
+    s = 3; ox = 3;
+}
+
+static void drawLavaLamp(TFT_eSPI& t, uint32_t now, uint8_t L, bool chg) {
+    // Art x -1..11 and y -1..19: the lamp plus a ring for its outline.
+    static const int GW = 13, GH = 21;
+    uint16_t col[GH][GW];
+    uint8_t  kind[GH][GW] = {};          // 0 nothing, 1 lamp, 2 outline
+    auto put = [&](int x, int y, uint16_t c) {
+        if (x < -1 || x > 11 || y < -1 || y > 19) return;
+        kind[y + 1][x + 1] = 1; col[y + 1][x + 1] = c;
+    };
+    auto fill = [&](int x, int y, int w, int h, uint16_t c) {
+        for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) put(x + i, y + j, c);
+    };
+    // The glass widens from 5 wide under the cap to 9 at the base.
+    auto glass = [](int y, int& a, int& z) {
+        const float hw = 2.0f + (float)(y - 3) / 11.0f * 2.5f;
+        a = (int)lroundf(5.0f - hw); z = (int)lroundf(5.0f + hw);
+    };
+    const bool low = L <= 10 && !chg;
+    const int  n   = (int)lroundf(12.0f * L / 100.0f);   // rows of lava, of 12
+
+    const uint16_t metal  = Theme::PURPLE;
+    const uint16_t metalD = Theme::blend(Theme::PURPLE, TFT_BLACK, 90);
+    const float k = (sinf((float)now / 1800.0f) + 1.0f) * 0.5f;
+    const uint16_t hue = k < 0.5f
+        ? Theme::blend(Theme::VAPOR_PINK, Theme::VAPOR_PURPLE, (uint16_t)(k * 2.0f * 256.0f))
+        : Theme::blend(Theme::VAPOR_PURPLE, Theme::CYAN, (uint16_t)((k - 0.5f) * 2.0f * 256.0f));
+    uint16_t liq = hue;
+    if (low && lampHash(1, now / 90) > 0.55f) liq = Theme::blend(hue, TFT_BLACK, 179);
+    if (chg) liq = Theme::blend(hue, TFT_WHITE, (uint16_t)((0.15f + 0.15f * sinf((float)now / 150.0f)) * 256.0f));
+    const uint16_t liqEdge   = Theme::blend(liq, TFT_BLACK, 102);
+    const uint16_t emptyFill = 0x2065;   // ( 35, 12, 45)
+    const uint16_t emptyEdge = 0x51ED;   // ( 80, 60,110)
+
+    // The cap and base: purple, or on the cable a rainbow scrolling through
+    // them row by row, one lap every two seconds or so.
+    auto metalRow = [&](int y, bool dark) -> uint16_t {
+        if (!chg) return dark ? metalD : metal;
+        const uint16_t c = lampRainbow((uint16_t)((now / 6 + (uint32_t)y * 24u) % 360u));
+        return dark ? Theme::blend(c, TFT_BLACK, 90) : c;
+    };
+    fill(4, 0, 3, 1, metalRow(0, false)); fill(3, 1, 5, 1, metalRow(1, false)); fill(3, 2, 5, 1, metalRow(2, true));
+    for (int y = 3; y <= 14; y++) {
+        int a, z; glass(y, a, z);
+        const bool filled = 14 - y < n;
+        for (int x = a; x <= z; x++) {
+            const bool edge = x == a || x == z;
+            put(x, y, filled ? (edge ? liqEdge : liq) : (edge ? emptyEdge : emptyFill));
+        }
+    }
+    if (n > 1) {
+        const float sp = chg ? 2.5f : 1.0f;
+        static const float PH[3] = { 0.0f, 1.7f, 3.1f };
+        for (int i = 0; i < 3; i++) {
+            const uint16_t c = i == 1 ? Theme::CYAN : Theme::VAPOR_YELLOW;
+            const float ph = (float)now * sp / 900.0f + PH[i];
+            const int yy = 14 - (int)lroundf((sinf(ph) + 1.0f) * 0.5f * (float)(n - 1));
+            int a, z; glass(yy, a, z);
+            const int xx = (int)lroundf(5.0f + sinf(PH[i] * 3.0f + i) * (float)(z - a) / 4.0f);
+            put(xx, yy, c); put(xx + 1, yy, c);
+            const int y2 = yy + (cosf(ph) > 0.0f ? 1 : -1);
+            if (14 - y2 < n && y2 <= 14) put(xx, y2, c);
+        }
+    }
+    if (chg && n >= 2) {
+        // On the cable: a stream of bubbles racing up through the lava, so
+        // charging reads from across the room and not only side by side.
+        const uint16_t fizz = Theme::blend(hue, TFT_WHITE, 200);
+        static const uint8_t BX[3] = { 4, 6, 5 };
+        for (int i = 0; i < 3; i++) {
+            const uint32_t ph = (now + (uint32_t)i * 233u) % 700u;
+            const int yy = 14 - (int)(ph * (uint32_t)n / 700u);
+            if (yy > 14 - n) put(BX[i] + (int)((now / 140 + i) % 2), yy, fizz);
+        }
+    }
+    fill(2, 15, 7, 1, metalRow(15, true)); fill(2, 16, 7, 1, metalRow(16, false));
+    fill(2, 17, 7, 1, metalRow(17, false)); fill(1, 18, 9, 1, metalRow(18, false));
+    if (L >= 100 && (now / 300) % 2 == 0) put(5, 0, TFT_WHITE);
+
+    // The outline: every empty neighbour of the lamp. Black, except beside
+    // the lit part of the glass, where it glows the lava's colour.
+    // On the cable the glow beats, bright to dim, about once a second.
+    const uint16_t glow = chg
+        ? Theme::blend(hue, TFT_BLACK, (uint16_t)(60.0f + 110.0f * (0.5f + 0.5f * sinf((float)now / 160.0f))))
+        : Theme::blend(hue, TFT_BLACK, 154);
+    for (int gy = 0; gy < GH; gy++) for (int gx = 0; gx < GW; gx++) {
+        if (kind[gy][gx]) continue;
+        bool touch = false;
+        for (int dy = -1; dy <= 1 && !touch; dy++) for (int dx = -1; dx <= 1; dx++) {
+            const int ny = gy + dy, nx = gx + dx;
+            if (ny >= 0 && ny < GH && nx >= 0 && nx < GW && kind[ny][nx] == 1) { touch = true; break; }
+        }
+        if (!touch) continue;
+        const int y = gy - 1;
+        kind[gy][gx] = 2;
+        col[gy][gx] = (y >= 3 && y <= 14 && 14 - y < n) ? glow : TFT_BLACK;
+    }
+
+    int s, ox, oy;
+    lampPlace(t, s, ox, oy);
+    for (int gy = 0; gy < GH; gy++) {
+        int gx = 0;
+        while (gx < GW) {
+            if (!kind[gy][gx]) { gx++; continue; }
+            const uint16_t c = col[gy][gx];
+            int run = 1;
+            while (gx + run < GW && kind[gy][gx + run] && col[gy][gx + run] == c) run++;
+            t.fillRect(ox + (gx - 1) * s, oy + (gy - 1) * s, run * s, s, c);
+            gx += run;
+        }
+    }
+}
+
+// Asks the board for its battery once a second, and draws the lamp when there
+// is a cell to show.
+static void drawBatteryGauge(TFT_eSPI& t, uint32_t now) {
+    if (!s_battSrc) return;
+    static uint32_t at = 0;
+    static bool     has = false, chg = false;
+    static uint8_t  pct = 0;
+    if (!at || now - at >= 1000) {
+        at = now ? now : 1;
+        has = s_battSrc(pct, chg);
+        if (pct > 100) pct = 100;
+    }
+    if (!has) return;
+    int s, ox, oy;
+    lampPlace(t, s, ox, oy);
+    if (DrawBand::has(oy - s, oy + 20 * s)) drawLavaLamp(t, now, pct, chg);
+}
+
 #if defined(TWATCH_S3)
 static int16_t drawCornerClock(TFT_eSPI& t, int w) {
     if (!Clock::trusted()) return -1;
@@ -1878,6 +2058,14 @@ void uiClearDrawCrowd(TFT_eSPI& t, uint32_t now, const Mesh::SquadMember* crowd,
     // Asked to stand bigger than the band would choose: past the size he
     // stands at alone, but never taller than the band, and never so wide
     // they stand in each other rather than beside each other.
+#ifndef ARDUINO
+    // Emulator only, beside SQUACHSIM_CROWDFIT: SQUACHSIM_CROWDK=k scales the
+    // crowd by k (either way), under the same two caps as `grow`.
+    if (const char* kk = getenv("SQUACHSIM_CROWDK")) {
+        const float k = (float)atof(kk);
+        if (k > 0.0f) s = fminf(s * k, fminf(bandH / 74.0f, 1.3f * cw / 56.0f));
+    }
+#endif
     if (grow > 1.0f) {
         s = fminf(s * grow, fminf(bandH / 74.0f, 1.3f * cw / 56.0f));
     }
@@ -2448,6 +2636,94 @@ static uint32_t rawGuestId(uint32_t now) {
 #include "idle_events.h"
 #include <Arduino.h>
 
+// The pets at double size on the large panels. They are drawn, unchanged,
+// into a layer half the screen's width and height (Pet::setZoom says which
+// world they are in), and every pixel they drew is laid onto the screen as
+// a 2x2 block. 38 KB at 480x320, in PSRAM: only boards that have it, so the
+// 3.5" CYDs without PSRAM keep their pets at the old size.
+static TFT_eSprite* s_petLayer = nullptr;
+// The see-through colour: a dark pure green that no pet, balloon or chain is
+// drawn in (every colour in their code checked, 2026-10-09). It was 0x2125
+// first -- which is C1iPPY's outline, so he came out with none.
+static const uint16_t PET_KEY16 = 0x06C0;
+
+static bool petLayerFor(TFT_eSPI& t, int w, int h) {
+    if (!Theme::large()) return false;
+#if defined(ESP_PLATFORM)
+    if (!psramFound()) return false;
+#endif
+    const int lw = w / 2, lh = h / 2;
+    if (s_petLayer && (s_petLayer->width() != lw || s_petLayer->height() != lh)) {
+        s_petLayer->deleteSprite();
+        delete s_petLayer;
+        s_petLayer = nullptr;
+    }
+    if (!s_petLayer) {
+        s_petLayer = new TFT_eSprite(&t);
+        s_petLayer->setColorDepth(8);
+#if defined(ESP_PLATFORM)
+        s_petLayer->setAttribute(PSRAM_ENABLE, true);
+#endif
+        if (!s_petLayer->createSprite(lw, lh)) {
+            delete s_petLayer;
+            s_petLayer = nullptr;
+            return false;
+        }
+    }
+    return true;
+}
+
+static void drawPets(TFT_eSPI& t, uint32_t now, int w, int h, int bandTop, int petFloor) {
+    if (!Pet::anyOut(now) || !petLayerFor(t, w, h)) {
+        Pet::setZoom(1);
+        Pet::tick(t, now, w, bandTop, petFloor);
+        return;
+    }
+    Pet::setZoom(2);
+    TFT_eSprite& L = *s_petLayer;
+    L.fillRect(0, 0, L.width(), L.height(), PET_KEY16);   // fillSprite, which the emulator lacks
+#if defined(ESP_PLATFORM)
+    // The key as the layer stores it, whatever 8 bits the 16 came down to.
+    const uint8_t PET_KEY8 = L.getPointer() ? ((const uint8_t*)L.getPointer())[0] : 0;
+#endif
+    // ...and as the layer reads it back, which is not always the 16 bits
+    // that went in: the sprite stores fewer, and gives back what it kept.
+    const uint16_t petKey = L.readPixel(0, 0);
+    Pet::tick(L, now, w / 2, bandTop / 2, petFloor / 2);
+    const int lw = L.width(), lh = L.height();
+#if defined(ESP_PLATFORM)
+    // The layer's own bytes on a board: 38,400 of them, a run at a time.
+    const uint8_t* buf = (const uint8_t*)L.getPointer();
+    if (buf && L.getColorDepth() == 8) {
+        for (int y = 0; y < lh; y++) {
+            const uint8_t* row = buf + (size_t)y * lw;
+            int x = 0;
+            while (x < lw) {
+                const uint8_t c = row[x];
+                int e = x + 1;
+                while (e < lw && row[e] == c) e++;
+                if (c != PET_KEY8) t.fillRect(x * 2, y * 2, (e - x) * 2, 2, L.color8to16(c));
+                x = e;
+            }
+        }
+        Pet::drawHeldBalloons(t);
+        return;
+    }
+#endif
+    // The emulator's sprites keep 16 bits a pixel: read them back instead.
+    for (int y = 0; y < lh; y++) {
+        int x = 0;
+        while (x < lw) {
+            const uint16_t c = L.readPixel(x, y);
+            int e = x + 1;
+            while (e < lw && L.readPixel(e, y) == c) e++;
+            if (c != petKey) t.fillRect(x * 2, y * 2, (e - x) * 2, 2, c);
+            x = e;
+        }
+    }
+    Pet::drawHeldBalloons(t);
+}
+
 void uiClearInit(TFT_eSPI& t) {
     // fillScreen() relies on TFT_eSPI's base-class width/height, which
     // TFT_eSprite::createSprite() never updates — it leaves stale
@@ -2605,18 +2881,83 @@ static void drawCounterLine(TFT_eSPI& t, int w, int y, const DetectionEngine& en
 // right, the high five, the conversation and the set pieces. Drawn into the
 // band from `titleBottom` to `squachyBottom`, which is the main screen's
 // Squachy band there and the room under the clock on the desk.
+// ---- the 3.5" boards ------------------------------------------------------------
+// Standing up, the 3.5" has a tall band and he filled little of it. These are
+// the sizes picked for it on two slider pages (2026-10-10), as multiples of
+// what he was. Portrait: SMALL 1.5, MEDIUM 1.4, LARGE 1.3 on his own, as big
+// as fits with a visitor (below), a crowd of three 1.1, of four or five 1.2.
+// Landscape: alone as he was, 1.2 with a visitor and in a crowd of up to
+// five. Every 480x320 board; every smaller panel is as it was.
+static bool tallBig(TFT_eSPI& t) { return Theme::large() && t.height() > t.width(); }
+static bool wideBig(TFT_eSPI& t) { return Theme::large() && t.width() > t.height(); }
+static float soloBoost(TFT_eSPI& t, uint8_t sizePct) {
+    if (!tallBig(t)) return 1.0f;
+    return sizePct <= 70 ? 1.5f : sizePct <= 85 ? 1.4f : 1.3f;
+}
+// With a visitor: as big as fits once they stand closer -- each may take 60%
+// of the width, so arms overlap in the middle -- which is past the 1.5 the
+// slider stopped at with half each (asked for bigger still, 2026-10-10).
+// The 320x240 boards -- the 2.4", 2.8" and 3.2" CYDs and the 2.8" Freenove,
+// one picture for all of them -- picked on a third page: with a visitor 1.2
+// in landscape (portrait already overlaps them), crowds of three 1.1, four or
+// five 1.2, six to eight 1.2 in landscape and 1.1 in portrait. Exactly those
+// two shapes: the watch and the StickS3 panels get pages of their own.
+static bool qvga(TFT_eSPI& t) {
+    return (t.width() == 320 && t.height() == 240) || (t.width() == 240 && t.height() == 320);
+}
+static float visitBoost(TFT_eSPI& t) {
+    if (tallBig(t)) return 2.0f;
+    if (wideBig(t)) return 1.2f;
+    if (qvga(t) && t.width() > t.height()) return 1.2f;
+    return 1.0f;
+}
+static const float VISIT_SHARE = 0.6f;
+static float crowdGrow(TFT_eSPI& t, uint8_t bodies) {
+    if (tallBig(t)) return bodies <= 3 ? 1.1f : bodies <= 5 ? 1.2f : 1.0f;
+    if (wideBig(t)) return bodies <= 5 ? 1.2f : 1.0f;
+    if (qvga(t)) {
+        if (bodies <= 3) return 1.1f;
+        if (bodies <= 5) return 1.2f;
+        return t.width() > t.height() ? 1.2f : 1.1f;
+    }
+    // The T-Watch's 240x240, picked on its own page: 1.2 up to five, 1.1 past.
+    if (t.width() == 240 && t.height() == 240) return bodies <= 5 ? 1.2f : 1.1f;
+    return 1.0f;
+}
+
 static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
                       int titleBottom, int squachyBottom, bool advance, bool msgFresh) {
     const int w = t.width();
     const int SMALL_PCT = 70;
-    const int gap  = w / 4;
+    const float share = tallBig(t) ? VISIT_SHARE : 0.5f;
+    // On the 3.5" in portrait the two of them stand in the middle of the
+    // band rather than on its floor: at the size they reach there -- their
+    // share of the width each, 74 rows of body per unit of scale -- the floor left
+    // most of the screen above them empty. The whole band moves up rather
+    // than shrinking, so they keep the size it gives them; everything below
+    // works from squachyBottom, so the pair, the slap and the bubbles follow.
+    int lift = 0;
+    if (tallBig(t)) {
+        const int pair = (int)(74.0f * ((float)w * share - 8.0f) / 56.0f);
+        const int band = squachyBottom - titleBottom;
+        if (band > pair) lift = (band - pair) / 2;
+    }
+    const int bandH = squachyBottom - titleBottom;
+    titleBottom   -= lift;
+    squachyBottom -= lift;
+    // Closer together there, so the bigger pair still stands on the screen.
+    const int gap  = tallBig(t) ? (int)((float)w * 0.21f) : w / 4;
     const int homeX = w / 2 + gap;     // where the guest stands
     const int offX  = w + 40;          // off the right edge
 
     Squachy::setCompany(true);
+    Squachy::setCompanyShare(share);
+    Squachy::setSizeBoost(visitBoost(t));
     Squachy::tick(t, w / 2 - gap + hostLeanPx(), titleBottom,
-                  squachyBottom - titleBottom,
+                  bandH,
                   now, advance, 1.0f, false, 0, SMALL_PCT);
+    Squachy::setSizeBoost(1.0f);
+    Squachy::setCompanyShare(0.5f);
     Squachy::setCompany(false);
 
     // The visitor is drawn, not ticked: tick() owns mood, quip timers
@@ -2666,8 +3007,11 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
                         // Just above his own head, not the boot
                         // splash's 34 -- that lands in the host's
                         // bubble row and the two paint over each
-                        // other. Higher by a hat, when he has one.
-                        20 + scriptHatPx(gs),
+                        // other. Higher by a hat, when he has one. On
+                        // the 3.5" in portrait, clear of both heads: its
+                        // two size-2 lines would otherwise cover the
+                        // host's face beside him.
+                        (tallBig(t) ? 78 : 20) + scriptHatPx(gs),
                         // Cracking up at whatever the host just said.
                         // The host gets the same thing through his
                         // mood machine; this cameo has none.
@@ -2862,6 +3206,9 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     Theme::drawActiveBackground(t, now, 0, h, eng, advance);
     Theme::clearBackgroundFloor();
     FrameProf::lap(FrameProf::BG);
+    // The battery lamp, under everything that moves for the same reason as
+    // the corner clock: a speech bubble that reaches up there covers it.
+    drawBatteryGauge(t, now);
 #if defined(TWATCH_S3)
     // Under everything that moves: see drawCornerClock().
     if (DrawBand::has(0, titleBottom)) s_cornerClockPillR = drawCornerClock(t, w);

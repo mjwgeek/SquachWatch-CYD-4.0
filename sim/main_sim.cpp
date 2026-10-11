@@ -416,7 +416,7 @@ int main(int argc, char** argv) {
     int H = portrait ? 320 : 240;
     if (!sizeArg.empty()) {
         int sw = 0, sh = 0;
-        if (sscanf(sizeArg.c_str(), "%dx%d", &sw, &sh) == 2 && sw > 63 && sh > 63) { W = sw; H = sh; Theme::setCompact(H < 200); Theme::setStillBackdrop(getenv("SQUACHSIM_STILL") != nullptr); }
+        if (sscanf(sizeArg.c_str(), "%dx%d", &sw, &sh) == 2 && sw > 63 && sh > 63) { W = sw; H = sh; Theme::setCompact(H < 200); Theme::setLarge((W < H ? W : H) >= 320); Theme::setStillBackdrop(getenv("SQUACHSIM_STILL") != nullptr); }
         else { fprintf(stderr, "--size wants WxH, e.g. 480x320" "\n"); return 2; }
     }
 
@@ -565,6 +565,15 @@ int main(int argc, char** argv) {
     if (getenv("SQUACHSIM_LEGEND")) Squachy::previewLegend(true);
     // SQUACHSIM_DEJA=ms brings TH3 0N3's deja vu cat round that often.
     if (const char* dj = getenv("SQUACHSIM_DEJA")) Squachy::t3DejaEvery = (uint32_t)atoi(dj);
+    // SQUACHSIM_BATT=54 (or 54c, on the cable): a battery for the lava lamp,
+    // the way the CBDs and the watch report theirs. Unset: no battery, as on
+    // the CYDs, and the screen is unchanged.
+    if (getenv("SQUACHSIM_BATT")) uiClearSetBatterySource([](uint8_t& pct, bool& chg) {
+        const char* b = getenv("SQUACHSIM_BATT");
+        pct = (uint8_t)atoi(b);
+        chg = strchr(b, 'c') != nullptr;
+        return true;
+    });
     // SQUACHSIM_PRIVACY=1: PRIVACY MODE on, for shots of the masked screens.
     if (getenv("SQUACHSIM_PRIVACY") && !Settings::privacyMode()) Settings::togglePrivacyMode();
     // SQUACHSIM_CLASSIC=1: DETECTIONS set to CLASSIC (NEARBY and the full counter rows).
@@ -583,6 +592,9 @@ int main(int argc, char** argv) {
         Theme::showToast("HEADS-UP", huSub, Theme::AMBER, 8000);
         Squachy::announce(huLine);
     }
+    // SQUACHSIM_SAY="LINE": a line in his bubble as the screen opens, for
+    // comparing bubble sizes across panels.
+    if (const char* say = getenv("SQUACHSIM_SAY")) Squachy::announce(say);
     // SQUACHSIM_CLIPCATCH=TYPE: C1iPPY has just seen a catch of that type and
     // has his expert opinion ready.
     if (const char* cc = getenv("SQUACHSIM_CLIPCATCH")) Pet::noteCatch((uint8_t)atoi(cc));
@@ -637,6 +649,11 @@ int main(int argc, char** argv) {
     // last frame.
     const uint32_t STEP_MS = 33;   // ~30fps, close to the device's real loop rate
     uint32_t now = millis();
+    // SQUACHSIM_T0 pins the first frame's time as well, so two renders of the
+    // same screen are byte-identical: with the wall clock here, a background
+    // or a blink lands a few milliseconds apart from run to run, and a
+    // comparison meant to prove a change left a board alone is all noise.
+    if (const char* t0 = getenv("SQUACHSIM_T0")) now = (uint32_t)strtoul(t0, nullptr, 10);
 
     // Virtual time, in the ONE-SHOT renderer too, not just the interactive
     // emulator.
@@ -1138,8 +1155,13 @@ int main(int argc, char** argv) {
         if (!grabbed) { grabbed = true; Squachy::trigger(Squachy::Event::HELD); }
         Squachy::grabTo(grabX, grabY);
     };
+    // SQUACHSIM_WANDERAT=n starts the wander at warm-up frame n instead of
+    // at the capture, so a clip can open partway through it.
+    const int wanderAt = getenv("SQUACHSIM_WANDERAT") ? atoi(getenv("SQUACHSIM_WANDERAT")) : -1;
+    const int8_t wanderDir = getenv("SQUACHSIM_WANDER") && atoi(getenv("SQUACHSIM_WANDER")) < 0 ? -1 : 1;
     for (int i = 0; i < frames; i++) {
         const uint32_t tNow = now + (uint32_t)i * STEP_MS;
+        if (i == wanderAt) { SimClock::nowMs = tNow; Squachy::wanderNow(wanderDir); }
         if (i > 20) grabStep();
         if (!tick(tNow)) { usage(); return 2; }
         // After the frame, so the tap lands on something just drawn:
@@ -1196,12 +1218,22 @@ int main(int argc, char** argv) {
         const uint32_t sNow = now + (uint32_t)(frames + s) * STEP_MS;
         grabStep();
         throwStep(s, sNow);
+        // SQUACHSIM_WANDER=1 or -1: his edge-to-edge wander, starting with the capture.
+        if (s == 0 && wanderAt < 0 && getenv("SQUACHSIM_WANDER")) { SimClock::nowMs = sNow; Squachy::wanderNow((int8_t)atoi(getenv("SQUACHSIM_WANDER"))); }
         tick(sNow);
         // --tap frame numbers run straight on through the capture, so a tap
         // can land on a frame you can actually look at afterwards.
         for (int k = 0; k < tapN; k++)
             if (taps[k].f == frames + s) tapAt(taps[k].x, taps[k].y, sNow);
         xyzzyStep();
+        // SQUACHSIM_PETLOG=1: the pet's drawn position every captured frame,
+        // and Squachy's, for checking that nothing teleports.
+        if (getenv("SQUACHSIM_PETLOG")) {
+            int px = -999, py = -999, cx = -999, hw = 0, tp = 0, bt = 0;
+            Pet::drawnAt(px, py);
+            Squachy::lastFootprint(cx, hw, tp, bt);
+            printf("petlog %d %d %d %d\n", s, px, py, cx);
+        }
         frame.pushSprite(0, 0);
         std::vector<uint8_t> rgb = toRgb888(tft.pixelsRGB565());
 

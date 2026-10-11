@@ -1969,6 +1969,15 @@ void startShowOff() {
     s_showWB    = -1;
 }
 
+void wanderNow(int8_t dir) {
+    const uint32_t now = millis();
+    mood = Mood::WALK;
+    moodUntil = now + WALK_DURATION_MS;
+    s_walkStart = now;
+    s_walkDir = dir < 0 ? -1 : 1;
+    s_walkYanked = false;
+}
+
 void stopShowOff() {
     if (!s_showOff) return;
     s_showOff   = false;
@@ -2046,7 +2055,9 @@ bool ownBubble(int& x, int& y, int& w, int& h) {
 // narrow portrait screen does it grow into a fixed-width, centered
 // multi-line box instead of letting the single-line version run off
 // (or past) both screen edges, which is what happened before this.
-static const uint8_t BUBBLE_MAX_LINES = 2;
+// Three lines room, two used on the small panels as ever: at double size on
+// the 3.5" in portrait a line of his takes three, and the third was cut.
+static const uint8_t BUBBLE_MAX_LINES = 3;
 
 // A bubble used to exist on one frame and not on the frame before it,
 // which is the most conspicuously un-animated thing on the CLEAR
@@ -2195,21 +2206,31 @@ static void drawBubble(TFT_eSPI& t, int cx, int topY, const char* text,
     Theme::bubbleFontOn(t);
     drawBubbleIn(t, cx, topY, text, now, mayRise, tailX);
     Theme::bubbleFontOff(t);
+    t.setTextSize(1);
 }
 
 
 static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
                          uint32_t now, bool mayRise, int tailX) {
-    t.setTextSize(1);
+    // Twice the size on the 3.5" boards, where the 2.8"'s 16 rows read as
+    // small print. Only his own bubble: the other screens that share the
+    // font are laid out around 16 rows.
+    const int k = Theme::large() ? 2 : 1;
+    t.setTextSize(k);
     t.setTextWrap(false);
     int screenW = t.width();
     int maxW = screenW - 16;   // widest a wrapped bubble is allowed to get
+    // On the large panels a wrapped bubble keeps between the corner icons, so
+    // it can rise over the tiles like a one-liner does (risenBubbleTop) --
+    // full width, it stayed under them, and at double size that put it
+    // across the top of his head.
+    if (k > 1 && maxW > screenW - 2 * CORNER_W - 2) maxW = screenW - 2 * CORNER_W - 2;
     int tw = t.textWidth(text);
 
     if (tw <= maxW - 10) {
         // Fits on one line -- the original compact box.
         int bw = tw + 10;
-        int bh = Theme::bubbleTextH() + 6;
+        int bh = Theme::bubbleTextH() * k + 6;
         int bx = cx - bw / 2;
         if (bx + bw > screenW - 2) bx = screenW - 2 - bw;
         if (bx < 2) bx = 2;
@@ -2238,11 +2259,15 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
     int bx = cx - bw / 2;
     if (bx < 2) bx = 2;
     if (bx + bw > screenW - 2) bx = screenW - 2 - bw;
+    if (k > 1) {   // between the corner icons wherever he stands, so it still rises
+        if (bx < CORNER_W + 1) bx = CORNER_W + 1;
+        if (bx + bw > screenW - CORNER_W - 1) bx = screenW - CORNER_W - 1 - bw;
+    }
 
     char lines[BUBBLE_MAX_LINES][48];
-    uint8_t n = Theme::wrapText(t, text, bw - 10, lines, BUBBLE_MAX_LINES);
+    uint8_t n = Theme::wrapText(t, text, bw - 10, lines, k > 1 ? BUBBLE_MAX_LINES : 2);
 
-    const int lineH = Theme::bubbleTextH() + 1;
+    const int lineH = Theme::bubbleTextH() * k + 1;
     int bh = 3 + (int)n * lineH + 3;
 
     // Asked the same question, and the width answers it: a wrapped box is
@@ -3115,6 +3140,10 @@ static const char* const WINK_LINES[] = {
 void setVisiting(bool v) { s_visiting = v; }
 static bool s_company = false;
 void setCompany(bool on) { s_company = on; }
+static float s_sizeBoost = 1.0f;
+void setSizeBoost(float k) { s_sizeBoost = k > 0.0f ? k : 1.0f; }
+static float s_companyShare = 0.5f;
+void setCompanyShare(float share) { s_companyShare = share > 0.0f ? share : 0.5f; }
 bool visiting() { return s_visiting; }
 void setListening(bool v) { s_listening = v; }
 
@@ -8261,15 +8290,27 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
     if (bigPanel) {
         const float span = (float)t.width() / (s_company ? 2.0f : 1.0f) - 8.0f;
         scaleMax = span / 56.0f;
-        if (scaleMax > 3.0f) scaleMax = 3.0f;
+        // 3.0 everywhere, as before, except the 3.5" boards themselves: there
+        // the band is tall enough that LARGE stopped at 3.0 with sky to
+        // spare, and SMALL and MEDIUM -- 70% and 85% of a band he was already
+        // capped below -- came out the same size as each other.
+        const float roof = Theme::large() ? 4.0f : 3.0f;
+        if (scaleMax > roof) scaleMax = roof;
         if (scaleMax < minScale) scaleMax = minScale;
     }
 
     float scale = (float)charAvail / (float)baseH;
     if (scale < minScale) scale = minScale;
+    const bool atCeiling = scale > scaleMax;
     if (scale > scaleMax) scale = scaleMax;   // 3.0 everywhere; narrower on a wide panel with company
 
     int headTopY = topY + bubbleRowH + headroom;
+    // Laid out from the top, his feet land on the floor only when he fills
+    // the band. Held at the ceiling he does not, and he stood in the air:
+    // LARGE on a 320x240 board in portrait, where the band is tall enough
+    // to want more than 3.0. Stand him on the floor instead. The big panels
+    // re-anchor below anyway, and off the ceiling nothing moves.
+    if (atCeiling) headTopY = topY + availHeight - (int)(scale * (float)baseH);
 
     // The SIZE row in Settings, applied last, and only when it is not 100.
     //
@@ -8287,7 +8328,36 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
     // smaller than what they solved for, so their guarantees hold with
     // room to spare rather than needing to be recomputed. That is why the
     // setting only goes down.
-    if (sizePct < 100) {
+    // On the big panels the SIZE row is a share of the size he actually
+    // reaches -- the ceiling included -- and he always stands on the floor.
+    // Off the ceiling, this is exactly the old arithmetic (charAvail / baseH
+    // is the scale he reaches, and the floor anchor is where the top-down
+    // layout puts his feet anyway). On it, the old code shrank a band he was
+    // not filling, so the sizes ran into the same ceiling and came out equal,
+    // and LARGE, laid out from the top, hung with his feet in the air.
+    if (bigPanel) {
+        float s2 = scale * (float)sizePct / 100.0f;
+        // The boost (setSizeBoost), past everything above, held only by the
+        // panel's width -- half of it with company -- and the band's height.
+        float boost = s_sizeBoost;
+#ifndef ARDUINO
+        // Emulator only: SQUACHSIM_SQK=k multiplies it, for rendering a size
+        // slider's every step before one of them ships.
+        if (const char* kk = getenv("SQUACHSIM_SQK")) { const float k = (float)atof(kk); if (k > 0.0f) boost *= k; }
+#endif
+        if (boost != 1.0f) {
+            s2 *= boost;
+            const float wCap = ((float)t.width() * (s_company ? s_companyShare : 1.0f) - 8.0f) / 56.0f;
+            const float hCap = (float)(availHeight - headroom) / (float)baseH;
+            if (s2 > wCap) s2 = wCap;
+            if (s2 > hCap) s2 = hCap;
+        }
+        if (s2 < minScale) s2 = minScale;
+        int tall = (int)(s2 * (float)baseH);
+        if (tall < charAvailFloor) { tall = charAvailFloor; s2 = (float)tall / (float)baseH; }
+        scale    = s2;
+        headTopY = topY + availHeight - tall;
+    } else if (sizePct < 100) {
         int shrunk = (charAvail * (int)sizePct) / 100;
         if (shrunk < charAvailFloor) shrunk = charAvailFloor;
         float s2 = (float)shrunk / (float)baseH;
@@ -8301,6 +8371,30 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
         if (bigPanel && s2 > scaleMax) { s2 = scaleMax; shrunk = (int)(s2 * (float)baseH); }
         scale    = s2;
         headTopY = topY + availHeight - shrunk;
+    }
+
+    // The boost on the smaller panels, from wherever the branches above left
+    // him: the same multiplier and the same two limits, feet on the floor.
+    // The main screen sets it on the 320x240 boards (ui_clear.cpp); at 1 it
+    // does nothing at all.
+    if (!bigPanel) {
+        float boost = s_sizeBoost;
+#ifndef ARDUINO
+        if (const char* kk = getenv("SQUACHSIM_SQK")) { const float k = (float)atof(kk); if (k > 0.0f) boost *= k; }
+#endif
+        if (boost != 1.0f) {
+            // The limits stop him growing; they never shrink him. The 2.8"
+            // in portrait already draws a visiting pair wider than half the
+            // panel each, and a limit below that took him DOWN as k went up.
+            float s2 = scale * boost;
+            const float wCap = ((float)t.width() * (s_company ? s_companyShare : 1.0f) - 8.0f) / 56.0f;
+            const float hCap = (float)(availHeight - headroom) / (float)baseH;
+            const float cap  = fmaxf(fminf(wCap, hCap), fminf(scale, s2));
+            if (s2 > cap) s2 = cap;
+            if (s2 < minScale) s2 = minScale;
+            scale    = s2;
+            headTopY = topY + availHeight - (int)(s2 * (float)baseH);
+        }
     }
 
     // A little wander away from center during Mood::WALK. bodyCx (not
