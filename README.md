@@ -13,6 +13,8 @@
 
 **Hardware:** ESP32-32E / E32R40T-class, 320×480 ST7796S display, XPT2046 resistive touch. Includes optional speaker alerts (GPIO26 DAC / GPIO4 amp), saved LOW/MED/HIGH/MAX volume, on-screen SND/MUT, and battery monitoring (GPIO34). Boards without a fitted speaker or battery can still be USB-powered; absent hardware is not automatically detected.
 
+**Wi-Fi updates:** Once your fork's `OTA_SIGNING_KEY` GitHub Actions secret is installed, **Settings → System → Update Firmware → Update over WiFi** will download signed releases from **this fork's GitHub Pages**, not the original developer's server. First install the new fork-owned public key by USB. [One-time OTA setup](CYD40_WIFI_OTA.md).
+
 **Build status:** [CYD40 firmware builds](https://github.com/mjwgeek/SquachWatch-CYD-4.0/actions/workflows/hosyond-cyd40.yml) · [Web flasher deployment](https://github.com/mjwgeek/SquachWatch-CYD-4.0/actions/workflows/pages-hosyond.yml) · [CYD40 port details](HOSYOND_CYD40.md)
 
 > **Compatibility:** This build is for the Hosyond/LCDWiki **4.0-inch CYD40** pinout, not interchangeable with every other CYD variant. The automated build succeeded, but verify operation on your own board before relying on the firmware. Keep a backup of existing flash data if it matters.
@@ -124,7 +126,7 @@ Your settings, PIN and squad stay put whichever way you go.
 
 | How | Where | Boards |
 |---|---|---|
-| **UPDATE OVER WIFI** | Settings → SYSTEM → UPDATE FIRMWARE | Every board. It joins a saved network (or lists the ones in range and takes the password) and downloads the release for its exact board from squachwatch.com |
+| **UPDATE OVER WIFI** | Settings → SYSTEM → UPDATE FIRMWARE | **CYD40 / CYD40 Fast:** signed updates from this fork after [OTA signing setup](CYD40_WIFI_OTA.md); other boards follow upstream behavior |
 | **UPDATE OVER BLUETOOTH (BETA)** | The same screen, then [squachwatch.com/update](https://squachwatch.com/update/) in a desktop browser | The T-Watch S3 and the other ESP32-S3 boards. Every other board dropped it to make room |
 | **USB** | The [web flasher](https://squachwatch.com/) | Every board, and the way back if the other two can't get through |
 | **UPDATE SQUAD** | The same screen | Tells your squad to update themselves; see [Updating the squad](#updating-the-squad) |

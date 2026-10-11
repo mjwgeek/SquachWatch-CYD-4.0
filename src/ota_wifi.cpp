@@ -8,6 +8,9 @@
 #include "clock.h"
 #include <Arduino.h>
 #include <WiFi.h>
+#if defined(CYD40)
+#include <WiFiClientSecure.h>
+#endif
 #include <Preferences.h>
 #include <esp_heap_caps.h>
 #include <string.h>
@@ -16,7 +19,11 @@
 #define FIRMWARE_VERSION "unknown"
 #endif
 #ifndef OTA_WIFI_BASE
+#if defined(CYD40)
+#define OTA_WIFI_BASE "https://mjwgeek.github.io/SquachWatch-CYD-4.0/"
+#else
 #define OTA_WIFI_BASE "http://squachwatch.com/"
+#endif
 #endif
 
 using OtaCore::Fail;
@@ -27,7 +34,11 @@ namespace {
 const char* NVS_NS = "otawifi";
 const uint32_t JOIN_TIMEOUT_MS  = 20000;
 const uint32_t STALL_TIMEOUT_MS = 15000;
+#if defined(CYD40)
+const uint32_t TASK_STACK       = 16384; // TLS handshake needs more stack than upstream HTTP
+#else
 const uint32_t TASK_STACK       = 8192;    // measured 3.2 KB used over a whole plain-HTTP update (was 12 KB, sized for TLS)
+#endif
 
 volatile State s_state   = State::OFF;
 volatile Fail  s_fail    = Fail::NONE;
@@ -204,11 +215,25 @@ void collectScan(int n) {
 //
 // The cost is that somebody on the same network can see which release is
 // being fetched, and a network that blocks plain HTTP now blocks updates too.
+#if defined(CYD40)
+static WiFiClientSecure* s_secure = nullptr;
+WiFiClient* client() {
+    if (!s_secure) {
+        s_secure = new WiFiClientSecure();
+        // The image's ECDSA signature is verified against our separate fork
+        // key before ESP32 accepts it. TLS protects the connection, while the
+        // signature authenticates the firmware independent of certificate churn.
+        s_secure->setInsecure();
+    }
+    return s_secure;
+}
+#else
 static WiFiClient* s_plain = nullptr;
 WiFiClient* client() {
     if (!s_plain) s_plain = new WiFiClient();
     return s_plain;
 }
+#endif
 
 // ---- Talking to the site ----------------------------------------------------
 //
@@ -242,13 +267,15 @@ const char*   SITE_HOST = "squachwatch.com";
 // OTA_WIFI_BASE taken apart once: "http://host[:port]/prefix/".
 char     s_host[48]   = "";
 uint16_t s_port       = 80;
+bool     s_https      = false;
 char     s_prefix[48] = "/";
 bool     s_noName     = false;   // the name lookup failed this session: go straight to the fixed addresses
 
 void parseBase() {
     if (s_host[0]) return;
     const char* b = OTA_WIFI_BASE;
-    if (strncmp(b, "http://", 7) == 0) b += 7;
+    if (strncmp(b, "https://", 8) == 0) { b += 8; s_https = true; s_port = 443; }
+    else if (strncmp(b, "http://", 7) == 0) b += 7;
     const char* slash = strchr(b, '/');
     const char* end   = slash ? slash : b + strlen(b);
     const char* colon = (const char*)memchr(b, ':', (size_t)(end - b));
@@ -271,6 +298,13 @@ bool ourHost(const char* h, size_t n) {
 // its few seconds, so a bad network never holds the boot screen longer than
 // it did before.
 bool connectSite(WiFiClient& c, uint32_t budgetMs) {
+#if defined(CYD40)
+    if (s_https) {
+        // Connect by hostname, not by IP: GitHub Pages requires correct SNI.
+        // Do not fall back to a different host if this connection fails.
+        return static_cast<WiFiClientSecure&>(c).connect(s_host, s_port);
+    }
+#endif
     const uint32_t t0 = millis();
     IPAddress ip;
     const bool literal = ip.fromString(s_host);

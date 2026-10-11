@@ -21,6 +21,11 @@
 #else
 #define SQW_PUSH_ROWS() FramePush::lastRows()
 #endif
+#if defined(FREENOVE_S3_35)
+#include "st77922_display.h"
+#include "st77922_qspi.h"
+#include "st77922_touch.h"
+#endif
 #include <XPT2046_Touchscreen.h>
 #include <Preferences.h>  // AWOK's own per-rotation touch-cal storage; see the AWOK block below pollTouch()'s globals
 #include <esp_heap_caps.h>   // heap_caps_get_largest_free_block() -- diagnostics screen
@@ -410,6 +415,11 @@ static void drawCrashCard(TFT_eSPI& t) {
 // Confirmed on the watch 2026-09-22: the ST7789 wants inversion on (as
 // LilyGo's own setup says); false showed every colour inverted.
 constexpr bool PANEL_NEEDS_INVERSION = true;
+#elif defined(FREENOVE_S3_35)
+// Freenove's init for the 3.5" ST77922 turns inversion on (0x21), which is
+// what St77922TFT::invertDisplay(true) sends. UNCONFIRMED by eye until the
+// board is looked at; INVERT in Settings flips it if wrong.
+constexpr bool PANEL_NEEDS_INVERSION = true;
 #elif defined(FREENOVE_S3)
 // Freenove's own setup for the S3 2.8" (FNK0104AB) turns inversion on, and
 // confirmed on an FNK0104B 2026-09-25: colours right with INVERT untouched.
@@ -481,6 +491,10 @@ public:
 // device type and only this hierarchy gives the two a common base. Nothing
 // is ever sent to an SPI display bus on this board -- see the header.
 CrowPanelTFT        tft;
+#elif defined(FREENOVE_S3_35)
+// Likewise not a TFT_eSPI: an ST77922 on a four-lane QSPI bus, wearing the
+// library's interface for the same reason -- see st77922_display.h.
+St77922TFT          tft;
 #else
 TFT_eSPI            tft = TFT_eSPI();
 #endif
@@ -647,6 +661,10 @@ static bool rawReadResistive(int16_t& a, int16_t& b);
 // calibration is needed or wanted.
 static uint16_t CAP_NX_MIN = CROW_CAP_NX_MIN, CAP_NX_MAX = CROW_CAP_NX_MAX;
 static uint16_t CAP_NY_MIN = CROW_CAP_NY_MIN, CAP_NY_MAX = CROW_CAP_NY_MAX;
+#elif defined(FREENOVE_S3_35)
+// The ST77922's own touch reports panel pixels too: a pass-through.
+static uint16_t CAP_NX_MIN = St77922Touch::NX_MIN, CAP_NX_MAX = St77922Touch::NX_MAX;
+static uint16_t CAP_NY_MIN = St77922Touch::NY_MIN, CAP_NY_MAX = St77922Touch::NY_MAX;
 #else
 static uint16_t CAP_NX_MIN = 32,  CAP_NX_MAX = 166;
 static uint16_t CAP_NY_MIN = 10,  CAP_NY_MAX = 308;
@@ -862,6 +880,11 @@ static bool readTouchRaw(int16_t& a, int16_t& b) {
     // so nothing else differs.
     uint16_t x, y;
     if (!Gt911::read(x, y)) return false;
+    a = (int16_t)x; b = (int16_t)y;
+    return true;
+#elif defined(FREENOVE_S3_35)
+    uint16_t x, y;
+    if (!St77922Touch::read(x, y)) return false;
     a = (int16_t)x; b = (int16_t)y;
     return true;
 #else
@@ -2103,6 +2126,54 @@ void boardBatteryLine(char* out, size_t n) {
     }
     snprintf(out, n, "%s", line);
 }
+
+// The home screen's lava lamp (uiClearSetBatterySource). Read every two
+// seconds. With no CHRG pin, "on the cable" is inferred: plugging in lifts the
+// cell's voltage at once by the charge current through its own resistance,
+// and unplugging drops it again, so a climb of 40 mV over the last minute
+// says plugged in and a fall of 40 from the minute's top says unplugged. A
+// guess, and it can take a sample or two to notice.
+struct LampSample { uint32_t sec; uint16_t mv; uint8_t pct; bool chg; };
+static const uint8_t LAMP_LOG_N = 90;
+static LampSample s_lampLog[LAMP_LOG_N];
+static uint8_t    s_lampLogAt = 0, s_lampLogN = 0;
+static bool boardBatteryState(uint8_t& pct, bool& charging) {
+    static uint32_t at = 0;
+    static bool     has = false, chg = false;
+    static uint8_t  p = 0;
+    static uint16_t hist[30];
+    static uint8_t  hn = 0, hi = 0;
+    const uint32_t now = millis();
+    if (!at || now - at >= 2000) {
+        at = now ? now : 1;
+        const uint16_t mv = boardBatteryMv();
+        has = mv >= 2500;
+        if (has) {
+            p = boardBatteryPct(mv);
+            hist[hi] = mv; hi = (uint8_t)((hi + 1) % 30); if (hn < 30) hn++;
+            uint16_t lo = 0xFFFF, top = 0;
+            for (uint8_t i = 0; i < hn; i++) { if (hist[i] < lo) lo = hist[i]; if (hist[i] > top) top = hist[i]; }
+            if (!chg && mv >= lo + 40) chg = true;
+            else if (chg && mv + 40 <= top) chg = false;
+        } else { hn = 0; chg = false; }
+        s_lampLog[s_lampLogAt] = { now / 1000, mv, (uint8_t)(has ? p : 255), chg };
+        s_lampLogAt = (uint8_t)((s_lampLogAt + 1) % LAMP_LOG_N);
+        if (s_lampLogN < LAMP_LOG_N) s_lampLogN++;
+    }
+    pct = p; charging = chg;
+    return has;
+}
+
+// BATT on the console: the last three minutes of what the lamp was told,
+// oldest first. The cable IS the console, so plug back in and ask -- the
+// board keeps running on its cell in between, and keeps the log.
+static void boardBatteryPrintLog() {
+    Serial.printf("[batt] lamp log, %u samples two seconds apart, oldest first: up(s) mV %% cable\n", (unsigned)s_lampLogN);
+    for (uint8_t i = 0; i < s_lampLogN; i++) {
+        const LampSample& r = s_lampLog[(s_lampLogAt + LAMP_LOG_N - s_lampLogN + i) % LAMP_LOG_N];
+        Serial.printf("[batt] %lu %u %u %s\n", (unsigned long)r.sec, (unsigned)r.mv, (unsigned)r.pct, r.chg ? "CABLE" : "-");
+    }
+}
 #endif
 
 #if defined(TWATCH_S3)
@@ -2384,6 +2455,25 @@ void twatchBatteryLine(char* out, size_t n) {
                       (unsigned)(s_pmu.getBattVoltage() % 1000 / 10));
     }
     snprintf(out, n, "%s", line);
+}
+
+// The home screen's lava lamp (uiClearSetBatterySource): the power chip's own
+// percent, and the cable counted as charging -- full on the cable still bubbles.
+static bool twatchBatteryState(uint8_t& pct, bool& charging) {
+    if (!s_pmuOk || !s_pmu.isBatteryConnect()) return false;
+    static uint32_t at = 0;
+    static int      p = -1;
+    static bool     chg = false;
+    const uint32_t now = millis();
+    if (!at || now - at >= 2000) {   // three I2C reads, every two seconds
+        at = now ? now : 1;
+        p = s_pmu.getBatteryPercent();
+        chg = s_pmu.isCharging() || s_pmu.isVbusIn();
+    }
+    if (p < 0) return false;
+    pct = (uint8_t)(p > 100 ? 100 : p);
+    charging = chg;
+    return true;
 }
 
 // The chip's own temperature sensor, read at most every two seconds: the
@@ -2807,6 +2897,7 @@ void setup() {
     printBootBanner();
 #if defined(TWATCH_S3)
     twatchPowerUp();
+    uiClearSetBatterySource(twatchBatteryState);
 #endif
 #if defined(CYD35)
     // One-time diagnostic: is PSRAM actually present on this unit? The
@@ -2895,6 +2986,11 @@ void setup() {
     // ST7796U and will lock up an ST7789 panel; do not re-add it unless
     // we confirm the panel is actually ST7796.
     tft.setRotation(screenRotation);
+    {
+        // The short side decides it, so it holds in every rotation.
+        const int sw = tft.width(), sh = tft.height();
+        Theme::setLarge((sw < sh ? sw : sh) >= 320);
+    }
 #if defined(AWOK)
     // No rotate button on this board (see the rotate handler in
     // loop(), not even compiled in on AWOK) -- hide the icon too so
@@ -3012,9 +3108,11 @@ void setup() {
     // 16-bit — the full 16-bit buffer didn't fit in the available
     // contiguous heap on this board.
     frame.setColorDepth(8);
-#if defined(SQW_S3) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
+#if (defined(SQW_S3) && !defined(FREENOVE_S3_35)) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
     // 57.6 KB fits in internal RAM with room to spare (75 KB at 320x240), and a sprite in
-    // PSRAM pushes slower and cannot go by DMA. Keep it inside.
+    // PSRAM pushes slower and cannot go by DMA. Keep it inside. (Not the
+    // Freenove 3.5": its 154 KB frame goes to PSRAM on purpose, and the QSPI
+    // push converts it through internal bounce buffers.)
     //
     // CrowPanel: not an economy but the fix for a twitching picture -- the
     // panel's DMA reads its framebuffer from PSRAM, and the UI's scattered
@@ -3103,6 +3201,24 @@ void setup() {
     usingCapTouch = CapTouch::probe();
     Serial.println(usingCapTouch ? "T-Watch S3 -- FT6336 capacitive touch answered."
                                  : "T-Watch S3 -- FT6336 did not answer; no touch.");
+#elif defined(FREENOVE_S3_35)
+    // The Freenove S3 3.5"'s touch is in the ST77922 itself, on I2C SDA 38 /
+    // SCL 39 at 0x55, reset on GPIO48, interrupt on GPIO47 (unused: polled).
+    // The ES8311 codec shares the bus at 0x18.
+    St77922Touch::begin(38, 39, 48, 47);
+    // That pulsed the chip's reset, which may be the display's too on a
+    // TDDI part: set the panel up again as a precaution, put its inversion
+    // back, and forget what it was showing.
+    FramePush::busLock();
+    St77922::reinit();
+    FramePush::busUnlock();
+    tft.invertDisplay(PANEL_NEEDS_INVERSION != Settings::inverted());
+    FramePush::invalidate();
+    usingCapTouch = St77922Touch::probe();
+    Serial.println(usingCapTouch ? "Freenove S3 3.5 -- ST77922 touch answered."
+                                 : "Freenove S3 3.5 -- ST77922 touch did not answer; no touch.");
+    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
+    uiClearSetBatterySource(boardBatteryState);
 #elif defined(FREENOVE_S3)
     // The Freenove S3 2.8"'s FT6336, on I2C SDA 16 / SCL 15 at 0x38, reset on
     // GPIO18 (active low). The ES8311 codec shares the bus at 0x18. FNK0104A
@@ -3112,7 +3228,8 @@ void setup() {
     usingCapTouch = CapTouch::probe();
     Serial.println(usingCapTouch ? "Freenove S3 -- FT6336 capacitive touch answered."
                                  : "Freenove S3 -- FT6336 did not answer; no touch (FNK0104A?).");
-    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO9 %u mV)\n", b, (unsigned)analogReadMilliVolts(9)); }
+    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
+    uiClearSetBatterySource(boardBatteryState);
 #elif defined(TOUCH_ON_DISPLAY_BUS)
     // AWOK's XPT2046 sits on the display's own shared VSPI bus (TOUCH_CS=21,
     // already armed by TFT_eSPI itself once awok_user_setup.h's #define
@@ -3504,6 +3621,7 @@ static const char* s_lastScreenName = nullptr;
 static uint32_t    s_lastScreenUs   = 0;
 static uint32_t    s_lastScreenAt   = 0;     // transitionStart of the screen being timed
 
+
 void loop() {
     // Cheap and unconditional: available() is a register read, and this
     // is the only way in for the one serial command the firmware takes.
@@ -3537,6 +3655,9 @@ void loop() {
             return true;
         }, nullptr);
     }
+#endif
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
+    if (g_consoleBatt) { g_consoleBatt = false; boardBatteryPrintLog(); }
 #endif
     Clock::tick(now);   // the note to self, when it is due
 #if SQUACH_MESH && defined(BENCH_TOOLS)
