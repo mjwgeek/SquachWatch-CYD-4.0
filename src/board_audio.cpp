@@ -67,8 +67,8 @@ void toneStop() {
 static uint8_t volumeSwing() {
 #if defined(CYD40)
     static const uint8_t SWING[] = { 18, 34, 58, 92 };  // LOW..MAX
-    uint8_t ix = Settings::soundVolume();
-    if (ix > 3) ix = 1;
+    const uint8_t pct = Settings::soundVolume(); // upstream uses 0..100
+    const uint8_t ix = pct < 26 ? 0 : (pct < 51 ? 1 : (pct < 76 ? 2 : 3));
     return SWING[ix];
 #else
     return 0;
@@ -77,7 +77,7 @@ static uint8_t volumeSwing() {
 
 static void dacBeepMs(uint16_t ms, uint16_t hz) {
 #if defined(CYD40)
-    if (!Settings::soundAlerts()) return;
+    if (Settings::soundVolume() == 0) return;
     if (hz < 200) hz = 200;
     const uint8_t swing = volumeSwing();
     const uint8_t hi = (uint8_t)(128 + swing);
