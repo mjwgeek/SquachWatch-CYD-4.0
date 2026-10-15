@@ -3229,7 +3229,7 @@ void setup() {
     usingCapTouch = St77922Touch::probe();
     Serial.println(usingCapTouch ? "Freenove S3 3.5 -- ST77922 touch answered."
                                  : "Freenove S3 3.5 -- ST77922 touch did not answer; no touch.");
-    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
+    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BATT_ADC, (unsigned)analogReadMilliVolts(BOARD_BATT_ADC)); }
     uiClearSetBatterySource(boardBatteryState);
 #elif defined(FREENOVE_S3)
     // Both Freenove S3 2.8 and LCDWiki 4.0 have FT6336 on SDA16/SCL15/RST18.
@@ -3246,7 +3246,7 @@ void setup() {
     Serial.println(usingCapTouch ? "Freenove S3 -- FT6336 capacitive touch answered."
                                  : "Freenove S3 -- FT6336 did not answer; no touch (FNK0104A?).");
 #endif
-    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
+    { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BATT_ADC, (unsigned)analogReadMilliVolts(BOARD_BATT_ADC)); }
     uiClearSetBatterySource(boardBatteryState);
 #elif defined(TOUCH_ON_DISPLAY_BUS)
     // AWOK's XPT2046 sits on the display's own shared VSPI bus (TOUCH_CS=21,
