@@ -420,6 +420,9 @@ constexpr bool PANEL_NEEDS_INVERSION = true;
 // what St77922TFT::invertDisplay(true) sends. UNCONFIRMED by eye until the
 // board is looked at; INVERT in Settings flips it if wrong.
 constexpr bool PANEL_NEEDS_INVERSION = true;
+#elif defined(LCDWIKI_ES3C40P)
+// LCDWiki ST7796S manufacturer init explicitly sends display inversion ON (0x21).
+constexpr bool PANEL_NEEDS_INVERSION = true;
 #elif defined(FREENOVE_S3)
 // Freenove's own setup for the S3 2.8" (FNK0104AB) turns inversion on, and
 // confirmed on an FNK0104B 2026-09-25: colours right with INVERT untouched.
@@ -665,6 +668,11 @@ static uint16_t CAP_NY_MIN = CROW_CAP_NY_MIN, CAP_NY_MAX = CROW_CAP_NY_MAX;
 // The ST77922's own touch reports panel pixels too: a pass-through.
 static uint16_t CAP_NX_MIN = St77922Touch::NX_MIN, CAP_NX_MAX = St77922Touch::NX_MAX;
 static uint16_t CAP_NY_MIN = St77922Touch::NY_MIN, CAP_NY_MAX = St77922Touch::NY_MAX;
+#elif defined(LCDWIKI_ES3C40P)
+// LCDWiki FT6336U reports native 320x480 panel coordinates.
+// Five-point user calibration can refine this when physical hardware is tested.
+static uint16_t CAP_NX_MIN = 0, CAP_NX_MAX = 319;
+static uint16_t CAP_NY_MIN = 0, CAP_NY_MAX = 479;
 #else
 static uint16_t CAP_NX_MIN = 32,  CAP_NX_MAX = 166;
 static uint16_t CAP_NY_MIN = 10,  CAP_NY_MAX = 308;
@@ -3220,13 +3228,19 @@ void setup() {
     { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
     uiClearSetBatterySource(boardBatteryState);
 #elif defined(FREENOVE_S3)
+    // Both Freenove S3 2.8 and LCDWiki 4.0 have FT6336 on SDA16/SCL15/RST18.
     // The Freenove S3 2.8"'s FT6336, on I2C SDA 16 / SCL 15 at 0x38, reset on
     // GPIO18 (active low). The ES8311 codec shares the bus at 0x18. FNK0104A
     // is the same board with no touch panel: nothing answers, and the screen
     // runs without touch rather than on a guessed fallback.
     CapTouch::begin(16, 15, 18, 0x38);
     usingCapTouch = CapTouch::probe();
-    Serial.println(usingCapTouch ? "Freenove S3 -- FT6336 capacitive touch answered."
+    Serial.println(usingCapTouch ?
+#ifdef LCDWIKI_ES3C40P
+        "LCDWiki ES3C40P -- FT6336U capacitive touch answered."
+#else
+        "Freenove S3 -- FT6336 capacitive touch answered."
+#endif
                                  : "Freenove S3 -- FT6336 did not answer; no touch (FNK0104A?).");
     { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
     uiClearSetBatterySource(boardBatteryState);
@@ -6495,6 +6509,8 @@ void loop() {
             info.boardName = "CrowPanel 7";
 #elif defined(TOUCH_ON_DISPLAY_BUS)
             info.boardName = "AWOK";
+#elif defined(LCDWIKI_ES3C40P)
+            info.boardName = "LCDWiki ES3C40P 4.0";
 #elif defined(CYD35)
             info.boardName = "cyd35 BETA";
 #else
