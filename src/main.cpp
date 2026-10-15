@@ -3235,13 +3235,13 @@ void setup() {
     // runs without touch rather than on a guessed fallback.
     CapTouch::begin(16, 15, 18, 0x38);
     usingCapTouch = CapTouch::probe();
-    Serial.println(usingCapTouch ?
-#ifdef LCDWIKI_ES3C40P
-        "LCDWiki ES3C40P -- FT6336U capacitive touch answered."
+#if defined(LCDWIKI_ES3C40P)
+    Serial.println(usingCapTouch ? "LCDWiki ES3C40P -- FT6336U capacitive touch answered."
+                                 : "LCDWiki ES3C40P -- FT6336U did not answer; no touch.");
 #else
-        "Freenove S3 -- FT6336 capacitive touch answered."
-#endif
+    Serial.println(usingCapTouch ? "Freenove S3 -- FT6336 capacitive touch answered."
                                  : "Freenove S3 -- FT6336 did not answer; no touch (FNK0104A?).");
+#endif
     { char b[16]; boardBatteryLine(b, sizeof b); Serial.printf("[batt] %s (raw GPIO%d %u mV)\n", b, BOARD_BAT_ADC, (unsigned)analogReadMilliVolts(BOARD_BAT_ADC)); }
     uiClearSetBatterySource(boardBatteryState);
 #elif defined(TOUCH_ON_DISPLAY_BUS)
