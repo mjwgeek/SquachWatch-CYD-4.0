@@ -3116,7 +3116,11 @@ void setup() {
     // 16-bit — the full 16-bit buffer didn't fit in the available
     // contiguous heap on this board.
     frame.setColorDepth(8);
-#if (defined(SQW_S3) && !defined(FREENOVE_S3_35)) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
+#if defined(LCDWIKI_ES3C40P)
+    // Full 320x480 buffer is 153,600 bytes at 8bpp. Use the onboard 8MB
+    // PSRAM rather than consume the S3's BLE/WiFi-sensitive internal heap.
+    frame.setAttribute(PSRAM_ENABLE, true);
+#elif (defined(SQW_S3) && !defined(FREENOVE_S3_35)) || (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL)
     // 57.6 KB fits in internal RAM with room to spare (75 KB at 320x240), and a sprite in
     // PSRAM pushes slower and cannot go by DMA. Keep it inside. (Not the
     // Freenove 3.5": its 154 KB frame goes to PSRAM on purpose, and the QSPI
