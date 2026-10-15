@@ -1,0 +1,48 @@
+name: LCDWiki ES3C40P S3 4.0 IPS Firmware
+
+on:
+  push:
+    branches:
+      - feature/lcdwiki-es3c40p
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-es3c40p:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Check LCDWiki isolation
+        run: |
+          grep -Fq '[env:lcdwiki-es3c40p]' platformio.ini
+          grep -Fq 'ST7796_DRIVER' include/lcdwiki_es3c40p_user_setup.h
+          grep -Fq 'LCDWIKI_ES3C40P' src/main.cpp
+      - name: Compile complete firmware
+        run: pio run -e lcdwiki-es3c40p
+      - name: Collect flash components
+        run: |
+          mkdir -p artifacts
+          cp .pio/build/lcdwiki-es3c40p/firmware.bin artifacts/firmware.bin
+          cp .pio/build/lcdwiki-es3c40p/partitions.bin artifacts/partitions.bin
+          cp .pio/build/lcdwiki-es3c40p/bootloader.bin artifacts/bootloader.bin
+          printf 'Board: LCDWiki ES3C40P ESP32-S3 N16R8\nEnvironment: lcdwiki-es3c40p\nBootloader offset: 0x0000\nPartitions offset: 0x8000\nApp offset: 0x10000\n' > artifacts/FLASH_INFO.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: squachwatch-lcdwiki-es3c40p-test
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
