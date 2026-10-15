@@ -38,6 +38,17 @@ jobs:
         run: python -m pip install platformio
       - name: Compile both variants (publishing blocked on failure)
         run: pio run -e cyd40 -e cyd40-fast
+      - name: Checkout LCDWiki board-only firmware source
+        uses: actions/checkout@v4
+        with:
+          ref: feature/lcdwiki-es3c40p
+          path: lcdwiki-src
+          persist-credentials: false
+      - name: Compile LCDWiki ESP32-S3 firmware (publishing blocked on failure)
+        run: |
+          test -f lcdwiki-src/include/lcdwiki_es3c40p_user_setup.h
+          grep -Fq '[env:lcdwiki-es3c40p]' lcdwiki-src/platformio.ini
+          pio run -d lcdwiki-src -e lcdwiki-es3c40p
       - name: Assemble web flasher site
         run: |
           mkdir -p _site/firmware/cyd40 _site/firmware/cyd40-fast
@@ -66,6 +77,40 @@ jobs:
           with open(d+"/manifest.json","w") as f:json.dump(manifest,f,indent=2)
           PY
           done
+      - name: Package LCDWiki ESP32-S3 USB test build
+        run: |
+          dest="_site/firmware/lcdwiki-es3c40p"
+          src="lcdwiki-src/.pio/build/lcdwiki-es3c40p"
+          mkdir -p "$dest"
+          for name in bootloader partitions firmware; do
+            test -s "$src/$name.bin"
+            cp "$src/$name.bin" "$dest/$name.bin"
+          done
+          # Reset OTA selection to app0 when installing via USB.
+          ota="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+          test -s "$ota"
+          cp "$ota" "$dest/boot_app0.bin"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          target = Path("_site/firmware/lcdwiki-es3c40p/manifest.json")
+          manifest = {
+              "name": "SquachWatch LCDWiki ES3C40P 4.0 IPS (EXPERIMENTAL)",
+              "version": os.environ["SQW_VERSION"] + "-test",
+              "new_install_prompt_erase": False,
+              "builds": [{
+                  "chipFamily": "ESP32-S3",
+                  "parts": [
+                      {"path": "bootloader.bin", "offset": 0},
+                      {"path": "partitions.bin", "offset": 32768},
+                      {"path": "boot_app0.bin", "offset": 57344},
+                      {"path": "firmware.bin", "offset": 65536}
+                  ]
+              }]
+          }
+          target.write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
+          python -m json.tool "$dest/manifest.json" >/dev/null
       - name: Prepare fork-owned signed Wi-Fi OTA files
         env:
           OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
