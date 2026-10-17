@@ -5,6 +5,7 @@
 #include "frame_prof.h"
 #if defined(CYD40)
 void boardBatteryLine(char* out, size_t n); // CYD40 battery helper from main.cpp
+bool boardBatteryChargingEstimated();   // uses the same 40mV trend as lava lamp
 static bool s_soundBtnOn = false;
 static int  s_soundBtnX = 0, s_soundBtnY = 0, s_soundBtnW = 0, s_soundBtnH = 0;
 
@@ -3514,17 +3515,26 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         t.setTextFont(1);
         t.setTextSize(1);
 
-        // Battery is rightmost.
+        // Battery is rightmost. When the existing voltage-trend algorithm
+        // suggests charging, render a tiny drawn lightning bolt immediately
+        // to the left: the built-in TFT font cannot reliably draw Unicode ⚡.
         t.setTextColor(Theme::GREEN, Theme::TASKBAR);
         const int battW = t.textWidth(compact);
         const int battX = w - battW - 4;
         t.setCursor(battX, 4);
         t.print(compact);
+        const bool chargingGuess = boardBatteryChargingEstimated();
+        const int iconX = battX - 12;
+        if (chargingGuess) {
+            t.fillTriangle(iconX + 5, 1, iconX + 1, 8, iconX + 5, 8, Theme::AMBER);
+            t.fillTriangle(iconX + 3, 6, iconX + 8, 6, iconX + 2, 15, Theme::AMBER);
+        }
 
-        // Quick sound control immediately to its left.
+        // Quick sound control immediately to its left. Leave the bolt
+        // corridor unused by the sound-control tap hitbox.
         const char* snd = Settings::soundAlerts() ? "SND" : "MUT";
         const int sndW = t.textWidth(snd);
-        s_soundBtnX = battX - sndW - 12;
+        s_soundBtnX = (chargingGuess ? iconX : battX) - sndW - 12;
         s_soundBtnY = 0;
         s_soundBtnW = sndW + 8;
         s_soundBtnH = titleBottom;

@@ -2164,6 +2164,14 @@ static bool boardBatteryState(uint8_t& pct, bool& charging) {
     return has;
 }
 
+// The top bar's lightning icon uses exactly the same smoothed 2-second
+// voltage history as the existing lava-lamp gauge, not a separate guess.
+bool boardBatteryChargingEstimated() {
+    uint8_t pct = 0;
+    bool charging = false;
+    return boardBatteryState(pct, charging) && charging;
+}
+
 // BATT on the console: the last three minutes of what the lamp was told,
 // oldest first. The cable IS the console, so plug back in and ask -- the
 // board keeps running on its cell in between, and keeps the log.

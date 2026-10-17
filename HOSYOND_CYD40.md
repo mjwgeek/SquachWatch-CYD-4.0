@@ -14,3 +14,12 @@ GitHub Actions builds both targets on pushes, pull requests, or manual dispatch.
 **Validation:** Compiling in GitHub Actions is required; this has not been independently flashed and verified on physical hardware in this commit. The 80 MHz clock may be unstable depending on the panel.
 
 **IMPORTANT:** The CYD40 files in this branch are a snapshot of the user's working changes. Merging future upstream updates is not automatic; reconcile conflicts carefully so CYD40 changes remain intact. Avoid flashing the full merged binary at offset zero if preserving NVS settings; the separate bootloader, partition, and app images are provided.
+
+## Estimated charging symbol
+
+The CYD40 title bar draws an amber lightning icon beside the battery percentage
+while the **existing** GPIO34 LiPo voltage-trend detector infers charging.
+The animated home-screen lava lamp remains unchanged. This is a heuristic
+(rise of about 40mV versus the recent low and a fall of 40mV from the recent
+high), **not** a true charger-status pin. The icon is omitted if no cell
+is detected. The sound toggle hit area moves left to avoid the symbol.
