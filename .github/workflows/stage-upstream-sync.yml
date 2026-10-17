@@ -32,10 +32,11 @@ jobs:
           echo "Fork base: $BASE"
           echo "Upstream: $UPSTREAM"
           git switch -c sync-upstream-v1.39.0
-          # A conventional merge attempts all upstream changes while
-          # favoring the fork ONLY at directly overlapping code hunks.
-          git merge --no-commit --no-ff -X ours FETCH_HEAD || true
-          test -f .git/MERGE_HEAD
+          # Squash import: GitHub Actions cannot push the upstream workflow
+          # changes (the bot lacks workflow-edit permission), so import
+          # current upstream source without rewriting GitHub workflows.
+          # Preserve the fork's content at conflicting hunks.
+          git merge --squash -X ours FETCH_HEAD || true
           conflicts="$(git diff --name-only --diff-filter=U)"
           if test -n "$conflicts"; then
             printf '%s\n' "$conflicts" | while IFS= read -r path; do
@@ -49,9 +50,11 @@ jobs:
           fi
           test -z "$(git diff --name-only --diff-filter=U)"
           git add -A
-          git commit -m "Merge upstream SquachWatch v1.39.0; preserve fork-specific conflicts"
+          # Restore all fork-owned automation definitions, including this
+          # staging workflow; any new upstream workflow additions are removed.
+          git restore --source="$BASE" --staged --worktree -- .github/workflows
+          git commit -m "Sync upstream SquachWatch v1.39.0 code, retaining local workflow definitions"
           git merge-base --is-ancestor "$BASE" HEAD
-          git merge-base --is-ancestor "$UPSTREAM" HEAD
           git push origin HEAD:refs/heads/sync-upstream-v1.39.0
       - uses: actions/setup-python@v5
         with:
