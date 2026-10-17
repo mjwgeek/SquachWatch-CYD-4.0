@@ -1,6 +1,10 @@
 // SquachWatch-CYD — clear (idle) screen implementation
 #include "ui_clear.h"
+#if SQUACH_LORA && defined(TDECK_PLUS)
+#include "ui_lorachat.h"   // the LORA n NEW pill: the tiles drop under it while it is up
+#endif
 #include "clock.h"      // the watch's corner clock
+#include "sound.h"      // yoo-hoo, when a visitor walks in
 #include "draw_band.h"
 #include "frame_prof.h"
 #if defined(CYD40)
@@ -23,6 +27,7 @@ bool uiClearSoundHit(int x, int y) {
 #include "meshtalk.h"
 #if SQUACH_MESH
 #include "squachmesh.h"
+#include "mesh_visit_appearance.h"
 #include "meshtutor.h"
 #include "squachy.h"
 #include "detection.h"
@@ -30,6 +35,9 @@ bool uiClearSoundHit(int x, int y) {
 #include "emote_script.h"
 #include <esp_system.h>
 #include "crowd_bench.h"
+#if defined(CYD_GPS)
+#include "gnss.h"       // the GPS label in the top bar
+#endif
 
 // A peer supplied from outside -- the emulator's --peer flag today, the radio
 // eventually. Always wins over the demo below.
@@ -1522,11 +1530,11 @@ static void drawPieceFx(TFT_eSPI& t, uint32_t now, int hx, int gx, int headTop, 
 
 // The guest being drawn, held as a COPY rather than a pointer.
 //
-// Two things go wrong without this. A peer whose advert changes mid-visit
-// would morph on screen -- outfit and colours swapping on a Squachy standing
-// still, which reads as a glitch rather than as anything. And the visitor has
-// to keep being drawn through LEAVING after the peer is already gone, which a
-// pointer to a slot that has been cleared cannot do.
+// A different peer must still walk out/in rather than silently turning one
+// Squachy into another, and a peer that leaves must keep its final outfit
+// throughout the goodbye walk. But a *same-MAC* guest who changes clothes or
+// shades while visiting should update in place; Squad already reflects the
+// latest radio appearance and CLEAR must not keep the arrival snapshot.
 static SquachMesh::Peer s_hosting{};
 static uint32_t         s_hostingId = 0;
 
@@ -1549,6 +1557,11 @@ static const uint32_t MSG_SHOW_MS = 8000;
 
 static bool    s_msgGuestOn = false;      // a visitor is on screen this frame
 static int     s_msgGx = 0, s_msgHeadTop = 0;
+// The visitor's own speech bubble this frame, if he is talking: the message
+// button keeps out from under it.
+static bool    s_msgGbOn = false;
+static int     s_msgGbX = 0, s_msgGbY = 0, s_msgGbW = 0, s_msgGbH = 0;
+static float   s_msgGs = 1.0f;            // the visitor's scale this frame
 static bool    s_bubbleOn = false;        // the tap target, filled by the draw
 static int16_t s_bubX = 0, s_bubY = 0, s_bubW = 0, s_bubH = 0;
 
@@ -1908,13 +1921,15 @@ static void drawBatteryGauge(TFT_eSPI& t, uint32_t now) {
 
 #if defined(TWATCH_S3)
 void twatchGpsBadge(TFT_eSPI& t);   // main.cpp: the GPS counter, top centre, while the GPS is on
-#if SQUACH_LORA
+#endif
+#if SQUACH_LORA && (defined(TWATCH_S3) || defined(TDECK_PLUS))
 void twatchLoraBadge(TFT_eSPI& t);  // main.cpp: LORA n NEW, under it, while chats are unread
 #endif
+#if defined(TWATCH_S3)
 static int16_t drawCornerClock(TFT_eSPI& t, int w) {
     if (!Clock::trusted()) return -1;
     char tm[8];
-    Clock::formatTime(tm, sizeof tm, true);
+    Clock::formatTime(tm, sizeof tm, !Settings::clock24Hour());
     t.setTextSize(2);
     const int icons = Theme::titleBarRightIconsX(w);
     const int right = icons - (icons < w ? 2 : 4);
@@ -1925,6 +1940,30 @@ static int16_t drawCornerClock(TFT_eSPI& t, int w) {
     t.setCursor(x, 3);
     t.print(tm);
     return (int16_t)(x - 3 - 4);
+}
+#endif
+#if defined(CYD_GPS)
+// The GPS label, left of the right-hand icons in the top bar: dim while a
+// module talks with no fix, green with a fresh fix, amber for a bench fix
+// typed in on the console. Nothing until the first good sentence or a bench
+// fix, so a build with no module plugged in looks like any other. Drawn
+// straight after the background like the watch's corner clock. Returns where
+// the WATCH pill's free span must end, or -1.
+static const int GPS_LABEL_W = 22;
+static bool gpsLabelShown() { return Gnss::good() > 0 || Gnss::faked(); }
+static int16_t drawGpsLabel(TFT_eSPI& t, int w) {
+    if (!gpsLabelShown()) return -1;
+    const uint16_t col = Gnss::faked() ? Theme::AMBER
+                       : Gnss::fresh(millis()) ? Theme::GREEN
+                       : Theme::W95_SHADOW;
+    const int right = Theme::titleBarRightIconsX(w) - 2;
+    const int x = right - GPS_LABEL_W;
+    t.setTextSize(1);
+    t.fillRect(x, 0, GPS_LABEL_W, 20, TFT_BLACK);
+    t.setTextColor(col, TFT_BLACK);
+    t.setCursor(x + (GPS_LABEL_W - (t.textWidth("GPS") - 1)) / 2, 6);
+    t.print("GPS");
+    return (int16_t)(x - 4);
 }
 #endif
 static int16_t s_wpX = 0, s_wpY = 0, s_wpW = 0, s_wpH = 0;
@@ -2393,10 +2432,25 @@ static void drawMessageUi(TFT_eSPI& t, uint32_t now, int titleBottom, int squach
     // Only with somebody around -- or something unread from somebody who was.
     if (s_msgGuestOn || (m.unread && !tut)) {
         int ix = gx + 26;
+        // Beside his head rather than on it on the big panels, where he is
+        // twice the size the 26 was measured against and it sat on his
+        // sunglasses. The other boards keep their 26 exactly.
+        if (Theme::large() && s_msgGuestOn) {
+            const int beside = (int)(29.0f * s_msgGs);
+            if (beside > 26) ix = gx + beside;
+        }
         if (ix + MSG_ICON_W > w - 4) ix = w - 4 - MSG_ICON_W;
         // Dropped clear of the red bubble while one is up: at the larger
         // size the two overlapped at the corner and, both red, read as one.
-        drawMessageIcon(t, ix, head + 4 + (showing ? 8 : 0),
+        int iy = head + 4 + (showing ? 8 : 0);
+        // And clear of his own speech bubble. On the 3.5" his lines wrap to
+        // two or three double-size rows that hang down past his head, right
+        // through where the button sits (2026-10-12): drop it under them.
+        if (s_msgGuestOn && s_msgGbOn &&
+            ix < s_msgGbX + s_msgGbW && ix + MSG_ICON_W > s_msgGbX &&
+            iy < s_msgGbY + s_msgGbH + 2 && iy + MSG_ICON_H + 6 > s_msgGbY)
+            iy = s_msgGbY + s_msgGbH + 4;
+        drawMessageIcon(t, ix, iy,
                         tut ? showing : m.unread, tut ? false : MeshTalk::sending(now), now);
     }
 }
@@ -2500,9 +2554,10 @@ static void visitTick(uint32_t now) {
         if (!id) return;
         const SquachMesh::Peer* g = rawGuest(now);
         if (!g) return;
-        s_hosting   = *g;                   // copied once, on arrival
+        s_hosting   = *g;                   // copy on arrival; live same-peer edits refresh below
         s_hostingId = id;
         s_vp = VisitPhase::ARRIVING; s_vpAt = now;
+        Sound::play(Sound::Id::VISITOR);
         s_guestTurn = true;                 // so the HOST speaks first
         s_hangStep  = 0;                    // and asks the first question
         s_guestLaughUntil = 0;              // no laughter carried in from
@@ -2535,6 +2590,14 @@ static void visitTick(uint32_t now) {
         s_vpAt = now + s_beatMs;            // goodbye first, then the walk
         return;
     }
+    // Same guest, same identity: follow their newest appearance without
+    // resetting the visit's phase, high-five, conversation, or emote state.
+    // The radio's Mesh::peer() is refreshed on every presence advertisement;
+    // SQUAD already draws that current data. This updates our hosted COPY
+    // only while the identical visitor is still here, never during LEAVING.
+    if (id && id == s_hostingId && s_vp != VisitPhase::LEAVING)
+        MeshVisitAppearance::refresh(s_hosting, s_hostingId, id, rawGuest(now), false);
+
     // An emote INTERRUPTS. Somebody pressed a button and is watching for it;
     // the set pieces and the naps start themselves, unprompted, and can wait.
     //
@@ -2645,6 +2708,7 @@ static const SquachMesh::Peer* rawGuest(uint32_t now) {
     // lesson, and a real peer turning up must not walk onto the stage.
     if (const SquachMesh::Peer* d = MeshTutor::guest()) return d;
     if (s_guest) return s_guest;          // the emulator's --peer, when set
+    if (Settings::meshCrowd() == 0) return nullptr;   // CROWD NONE: nobody visits
     if (const SquachMesh::Peer* p = Mesh::peer()) { s_realSeenAt = now; return p; }
 #if SQUACH_MESH_DEMO
     // The synthetic visitor is a FALLBACK, not the feature: it fills an empty
@@ -2662,6 +2726,7 @@ static const SquachMesh::Peer* rawGuest(uint32_t now) {
 static uint32_t rawGuestId(uint32_t now) {
     if (MeshTutor::guest()) return 0x7070u;
     if (s_guest) return 0x5111u;
+    if (Settings::meshCrowd() == 0) return 0;
     if (Mesh::peer()) {
         const uint8_t* m = Mesh::peerMac();
         uint32_t h = 2166136261u;                  // FNV-1a, plenty for six bytes
@@ -3132,6 +3197,7 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
                         // And his bubble says so.
                         true,
                         guestPose(now));
+    s_msgGbOn = Squachy::cameoBubble(s_msgGbX, s_msgGbY, s_msgGbW, s_msgGbH);
     Squachy::setNameTag(nullptr);
     Squachy::setHeadset(false);
     Squachy::setAuraPreview(-1);
@@ -3153,11 +3219,16 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
     }
     drawPieceFx(t, now, w / 2 - gap + hostLeanPx(), gx,
                 squachyBottom - (int)(58.0f * gs), gs);
+    // Our Squachy's words once more, on top: tick() drew them before the
+    // visitor existed in this frame, and a visitor walking in, leaning in or
+    // standing close on a big panel stood right over them.
+    Squachy::redrawOwnBubble(t, now);
 
     // Where he is this frame, for the message bubble and its button.
     s_msgGuestOn = true;
     s_msgGx      = gx;
     s_msgHeadTop = squachyBottom - (int)(58.0f * gs);
+    s_msgGs      = gs;
 }
 
 void uiClearVisitTick(uint32_t now) {
@@ -3282,11 +3353,18 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     // WATCHING / HUNTING pill is up -- that lives in the same middle of the
     // bar, so they drop under it, and Squachy gives up those rows while it
     // is set -- and never on the T-Watch, whose clock and badges are there.
+    // The T-Deck's LORA pill lives in that middle too, whenever the radio is
+    // on, so the tiles sit under it then (asked for 2026-10-13, always-on
+    // 2026-10-15).
 #if defined(TWATCH_S3)
     const bool tilesLow = true;
 #else
     const bool tilesLow = eng.watchKind() != DetectionEngine::WatchKind::NONE ||
-                          eng.huntKind()  != DetectionEngine::WatchKind::NONE;
+                          eng.huntKind()  != DetectionEngine::WatchKind::NONE
+#if SQUACH_LORA && defined(TDECK_PLUS)
+                          || Settings::loraListen() != 0   // the LORA pill is up whenever the radio is on (2026-10-15)
+#endif
+                          ;
 #endif
     const int tilesTop      = tilesLow ? titleBottom + 2 : 2;
     // The 135-pixel boards may borrow a third row on a crowded day (see the
@@ -3359,6 +3437,12 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     twatchLoraBadge(t);
 #endif
 #endif
+#if defined(CYD_GPS)
+    if (DrawBand::has(0, titleBottom)) s_cornerClockPillR = drawGpsLabel(t, w);
+#endif
+#if SQUACH_LORA && defined(TDECK_PLUS)
+    twatchLoraBadge(t);   // LORA n NEW, under the GPS label, under the bubbles
+#endif
     // Everything from here that moves by the call, not by the clock, moves
     // on the mascot's clock. See uiMascotStep().
     const bool step = uiMascotStep(now, advance);
@@ -3417,9 +3501,9 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         // reading order and it means the resident does not appear to move
         // aside for a stranger.
         visitTick(now);
-        // The hosted COPY, not whoever the radio is hearing right now. That
-        // is what keeps a visitor from morphing mid-visit and what lets him
-        // still be drawn while he walks out after the peer has gone.
+        // The hosted COPY, refreshed for the *same* visitor's outfit/shades/
+        // name changes but never swapped for a different MAC mid-visit.
+        // It stays intact through LEAVING even after radio presence is lost.
         const SquachMesh::Peer* guest = visitHosting();
         // A message in the air replaces his scripted line and his nameplate
         // while it is up -- it carries the sender's name itself, in red.
@@ -3806,7 +3890,11 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         // PIN is on) on the right. Centred, so the same margin both sides.
         const int iconMargin = (Theme::TITLE_ICON_W + (Security::enabled() ? 26 : 0) > Theme::TITLE_ICON_W
                                     ? Theme::TITLE_ICON_W + (Security::enabled() ? 26 : 0)
-                                    : Theme::TITLE_ICON_W) + 3;
+                                    : Theme::TITLE_ICON_W) + 3
+#if defined(CYD_GPS)
+                               + (gpsLabelShown() ? GPS_LABEL_W + 2 : 0)   // the GPS label, left of the icons
+#endif
+                               ;
         auto rowRoom = [&](uint8_t row) {
             const int top = tilesTop + row * tileLineH;
             return top < Theme::TITLE_ICON_BAND_H ? w - 2 * iconMargin : w - 8;

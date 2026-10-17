@@ -1,5 +1,6 @@
 // SquachWatch-CYD — Squachy implementation
 #include "squachy.h"
+#include "sound.h"
 #include "theme.h"
 #include "signatures.h"
 #include "settings.h"
@@ -668,6 +669,8 @@ static const char* s_clippyIntro     = nullptr;
 static bool     s_toasterUnlocked    = false;  // earned by tapping the same flying toaster three times
 static bool     s_ballUnlocked    = false;      // the ball and chain, earned by serving a sentence
 static const char* s_toasterIntro    = nullptr;
+static bool     s_meatyUnlocked    = false;  // earned by knocking three times on the SNOWFALL igloo
+static const char* s_meatyIntro    = nullptr;
 // Whether the card has been shown for him. Kept separately from the unlock
 // itself, and for the same reason the outfits keep an "announced" bitmask:
 // the pet survives a reboot, so without this the celebration would play
@@ -1383,7 +1386,7 @@ static_assert(sizeof(BG_LINES) / sizeof(BG_LINES[0]) == Settings::BACKGROUND_COU
 // brings one up it is a nudge, the second is clearer, and from then on he just
 // tells you what to do. Counted in RAM, so a reboot starts the nudges over,
 // which is right for somebody who has not been paying attention.
-enum Egg : uint8_t { EGG_WOLF, EGG_CHROME, EGG_PET, EGG_EYE, EGG_PARKA, EGG_YZZERD, EGG_O9K, EGG_REEK, EGG_GLYPH, EGG_TOASTY, EGG_N };
+enum Egg : uint8_t { EGG_WOLF, EGG_CHROME, EGG_PET, EGG_EYE, EGG_PARKA, EGG_YZZERD, EGG_O9K, EGG_REEK, EGG_GLYPH, EGG_TOASTY, EGG_IGLOO, EGG_N };
 static const char* const HINTS[EGG_N][3] = {
     /* FIRE: five taps on the moon */
     { "That moon's got a werewolf look to it.",
@@ -1425,6 +1428,10 @@ static const char* const HINTS[EGG_N][3] = {
     { "One of those toasters looks lonely.",
       "Keep tapping the same toaster. It wants down.",
       "Tap one toaster three times, quick!" },
+    /* SNOWFALL: three knocks on the igloo */
+    { "Somebody lives in that igloo.",
+      "Two eyes in that igloo door. Saw 'em.",
+      "Knock on the igloo three times!" },
 };
 static uint8_t s_hintSaid[EGG_N] = {};
 
@@ -1443,6 +1450,7 @@ static bool eggLocked(uint8_t e) {
         case EGG_REEK:   return !outfitUnlocked((uint8_t)OutfitId::SHAMBLER);
         case EGG_GLYPH:  return !outfitUnlocked((uint8_t)OutfitId::TH3_0N3);
         case EGG_TOASTY: return !s_toasterUnlocked;
+        case EGG_IGLOO:  return !s_meatyUnlocked;
         default:         return false;
     }
 }
@@ -1455,7 +1463,7 @@ static uint8_t eggsHere(uint8_t out[3]) {
         case Settings::Background::FIRE:      add(EGG_WOLF); add(EGG_REEK); break;
         case Settings::Background::TOASTERS:  add(EGG_CHROME); add(EGG_PET); add(EGG_TOASTY); break;
         case Settings::Background::STARFIELD: add(EGG_EYE); break;
-        case Settings::Background::SNOWFALL:  add(EGG_PARKA); break;
+        case Settings::Background::SNOWFALL:  add(EGG_PARKA); add(EGG_IGLOO); break;
         case Settings::Background::TERMINAL:  add(EGG_YZZERD); break;
         case Settings::Background::DIGITAL:   add(EGG_GLYPH); break;
         default: break;
@@ -1511,6 +1519,7 @@ static void ensurePrefsLoaded() {
     s_clippyUnlocked     = s_petPrefs.getBool("clippy", false);
     s_toasterUnlocked    = s_petPrefs.getBool("toaster", false);
     s_ballUnlocked       = s_petPrefs.getBool("ball", false);
+    s_meatyUnlocked    = s_petPrefs.getBool("meaty", false);
     // The master unlock means every pet too, including ones that did not
     // exist when it was entered: a board that has it catches up at boot.
     if (s_allOutfitsUnlocked) {
@@ -1518,6 +1527,7 @@ static void ensurePrefsLoaded() {
         if (!s_clippyUnlocked)  { s_clippyUnlocked = true;  s_petPrefs.putBool("clippy", true); }
         if (!s_toasterUnlocked) { s_toasterUnlocked = true; s_petPrefs.putBool("toaster", true); }
         if (!s_ballUnlocked)    { s_ballUnlocked = true;    s_petPrefs.putBool("ball", true); }
+        if (!s_meatyUnlocked) { s_meatyUnlocked = true; s_petPrefs.putBool("meaty", true); }
     }
     // Defaults ON once earned: somebody who just unlocked a pet wants to
     // see it, not to go and find a switch.
@@ -1896,6 +1906,7 @@ static void launch(float vx, float vy, uint32_t now) {
     mood = Mood::SHOCKED;
     moodUntil = now + 1600;
     say(pick(THROW_LINES, 5), MIN_BUBBLE_MS);
+    Sound::play(Sound::Id::THROW);
 }
 
 bool thrown() { return s_thPhase != Throw::NONE; }
@@ -2193,17 +2204,45 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
 // the bubble spans the screen and would sit across the message. He keeps
 // moving; only the words wait.
 static bool s_bubbleHeld = false;
+// The 2.8"'s bubble size on a big panel too, for a screen that would rather
+// give the room to him (the boot splash). See setBubbleSmall().
+static bool s_bubbleSmall = false;
+void setBubbleSmall(bool on) { s_bubbleSmall = on; }
 void holdBubble(bool held) { s_bubbleHeld = held; }
 
 // A cameo's bubble, held back to be drawn on top of whoever comes after it.
 static bool        s_bubbleDefer = false;
+static bool        s_cameoBub = false;                     // drawWaving()'s last bubble, for cameoBubble()
+static int         s_cameoBX = 0, s_cameoBY = 0, s_cameoBW = 0, s_cameoBH = 0;
+static const char* s_ownLine = nullptr;                    // tick()'s bubble this frame, for redrawOwnBubble()
+static int         s_ownCx = 0, s_ownTopY = 0, s_ownTail = 0;
 static const char* s_deferLine   = nullptr;
 static int         s_deferCx = 0, s_deferY = 0, s_deferTail = 0;
+
+// The bubble's face for `text`. Above the size the board was built with
+// (FONTS > BUBBLES), a line that would run out of the bubble's lines steps
+// the face down until it fits, or is back at that size: a bigger bubble
+// never loses the end of what he said.
+static void speechFace(TFT_eSPI& t, const char* text) {
+    Theme::speechFontOn(t, s_bubbleSmall);
+    t.setTextWrap(false);
+    while (Theme::speechAboveNormal()) {
+        const int k = Theme::speechScale();
+        const int screenW = t.width();
+        int maxW = screenW - 16;
+        if (k > 1 && maxW > screenW - 2 * CORNER_W - 2) maxW = screenW - 2 * CORNER_W - 2;
+        if (t.textWidth(text) <= maxW - 10) return;
+        char lines[BUBBLE_MAX_LINES + 1][48];
+        const uint8_t maxL = k > 1 ? BUBBLE_MAX_LINES : 2;
+        if (Theme::wrapText(t, text, maxW - 10, lines, maxL + 1) <= maxL) return;
+        Theme::speechFontSmaller(t);
+    }
+}
 
 static void drawBubble(TFT_eSPI& t, int cx, int topY, const char* text,
                        uint32_t now, bool mayRise = false, int tailX = NO_TAIL) {
     if (s_bubbleHeld) return;
-    Theme::bubbleFontOn(t);
+    speechFace(t, text);
     drawBubbleIn(t, cx, topY, text, now, mayRise, tailX);
     Theme::bubbleFontOff(t);
     t.setTextSize(1);
@@ -2240,7 +2279,7 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
         t.drawRoundRect(bx, by, bw, bh, 3, Theme::VAPOR_PINK);
         if (s_bubbleTone == 1) t.drawRoundRect(bx - 1, by - 1, bw + 2, bh + 2, 4, Theme::AMBER);
         t.setTextColor(s_bubbleTone == 2 ? Theme::W95_LIGHT : Theme::WHITE, Theme::BG);
-        t.setCursor(bx + 5, by + 3 + Theme::bubbleAscent());
+        t.setCursor(bx + 5, by + 3 + Theme::speechAscent());
         t.print(text);
         lastBubbleX = bx;
         lastBubbleY = by;
@@ -2282,7 +2321,7 @@ static void drawBubbleIn(TFT_eSPI& t, int cx, int topY, const char* text,
     t.setTextColor(s_bubbleTone == 2 ? Theme::W95_LIGHT : Theme::WHITE, Theme::BG);
     for (uint8_t i = 0; i < n; i++) {
         int lw = t.textWidth(lines[i]);
-        t.setCursor(bx + (bw - lw) / 2, by + 3 + i * lineH + Theme::bubbleAscent());
+        t.setCursor(bx + (bw - lw) / 2, by + 3 + i * lineH + Theme::speechAscent());
         t.print(lines[i]);
     }
     lastBubbleX = bx;
@@ -2678,7 +2717,8 @@ bool consumePetUnlockCard() {
 bool petUnlocked() { ensurePrefsLoaded(); return s_petUnlocked; }
 bool clippyUnlocked() { ensurePrefsLoaded(); return s_clippyUnlocked; }
 bool toasterUnlocked() { ensurePrefsLoaded(); return s_toasterUnlocked; }
-bool anyPetUnlocked() { ensurePrefsLoaded(); return s_petUnlocked || s_clippyUnlocked || s_toasterUnlocked || s_ballUnlocked; }
+bool anyPetUnlocked() { ensurePrefsLoaded(); return s_petUnlocked || s_clippyUnlocked || s_toasterUnlocked || s_ballUnlocked || s_meatyUnlocked; }
+bool meatyUnlocked() { ensurePrefsLoaded(); return s_meatyUnlocked; }
 bool ballUnlocked() { ensurePrefsLoaded(); return s_ballUnlocked; }
 bool ballPetOn() { ensurePrefsLoaded(); return s_ballUnlocked && (PetId)s_petSel == PetId::BALL && !s_jailLeft; }
 void unlockBall() {
@@ -2697,6 +2737,7 @@ static bool petOutNow() {
     if (p == PetId::CLIPPY)  return s_clippyUnlocked;
     if (p == PetId::TOASTER) return s_toasterUnlocked;
     if (p == PetId::BALL)    return s_ballUnlocked;
+    if (p == PetId::MEATY) return s_meatyUnlocked;
     return false;
 }
 
@@ -2736,6 +2777,31 @@ void unlockToaster(const char* why) {
 }
 
 const char* takeToasterIntro() { const char* w = s_toasterIntro; s_toasterIntro = nullptr; return w; }
+
+void unlockMeaty(const char* why) {
+    ensurePrefsLoaded();
+    if (s_meatyUnlocked) return;
+    s_meatyUnlocked = true;
+    s_petPrefs.putBool("meaty", true);
+    // The same manners as the other two: on at once when nobody else is out.
+    if (!petOutNow()) {
+        s_petSel = (uint8_t)PetId::MEATY;
+        s_petPrefs.putUChar("petSel", s_petSel);
+        s_meatyIntro = why;
+    } else {
+        Theme::showToast("M3@ty", "new pet. Settings > Pet", Theme::AMBER, 3500);
+    }
+}
+
+const char* takeMeatyIntro() { const char* w = s_meatyIntro; s_meatyIntro = nullptr; return w; }
+
+void relockMeaty() {
+    ensurePrefsLoaded();
+    s_meatyUnlocked = false;
+    s_meatyIntro = nullptr;
+    s_petPrefs.putBool("meaty", false);
+    if ((PetId)s_petSel == PetId::MEATY) { s_petSel = (uint8_t)PetId::OFF; s_petPrefs.putUChar("petSel", s_petSel); }
+}
 
 bool mouthPoint(int& x, int& y) {
     if (s_lastCx <= -9999) return false;
@@ -2803,6 +2869,7 @@ const char* petName() {
         case PetId::CLIPPY: return "C1iPPY";
         case PetId::TOASTER: return "T0@$TY";
         case PetId::BALL:   return "BALL & CHAIN";
+        case PetId::MEATY: return "M3@ty";
         default:            return "OFF";
     }
 }
@@ -3031,6 +3098,7 @@ void unlockAllOutfits() {
     if (!s_clippyUnlocked) { s_clippyUnlocked = true; s_petPrefs.putBool("clippy", true); }
     if (!s_toasterUnlocked) { s_toasterUnlocked = true; s_petPrefs.putBool("toaster", true); }
     if (!s_ballUnlocked) { s_ballUnlocked = true; s_petPrefs.putBool("ball", true); }
+    if (!s_meatyUnlocked) { s_meatyUnlocked = true; s_petPrefs.putBool("meaty", true); }
     // No popups for the cheat: it already has its own rainbow-and-confetti
     // tell below, and eleven modals in a row would bury it. Mark the lot as
     // seen so nothing queues now or on the next boot.
@@ -3145,6 +3213,7 @@ void setSizeBoost(float k) { s_sizeBoost = k > 0.0f ? k : 1.0f; }
 static float s_companyShare = 0.5f;
 void setCompanyShare(float share) { s_companyShare = share > 0.0f ? share : 0.5f; }
 bool visiting() { return s_visiting; }
+bool dancing() { return mood == Mood::DANCE; }
 void setListening(bool v) { s_listening = v; }
 
 static const char* const MEET_HOST_LINES[] = {
@@ -7619,6 +7688,7 @@ void drawWaving(TFT_eSPI& t, int cx, int baseY, uint32_t now, float scale, const
     // This cameo is placed by callers that have already reserved room, so
     // there is no region to clamp against.
     s_cameo = true;
+    s_cameoBub = false;   // set again below if this call draws a bubble
     s_topLimit = -10000;
     // The cameo has no mood machine driving the pose channels, so clear
     // them rather than letting whatever CLEAR left behind leak into the
@@ -7738,13 +7808,61 @@ void drawWaving(TFT_eSPI& t, int cx, int baseY, uint32_t now, float scale, const
             s_deferLine = line; s_deferCx = cx; s_deferY = headTopY - bubbleGap;
             s_deferTail = bubbleTail ? bodyCx : NO_TAIL;
         } else {
+            lastBubbleW = 0;
             drawBubble(t, cx, headTopY - bubbleGap, line, now, false, bubbleTail ? bodyCx : NO_TAIL);
+            if (lastBubbleW > 0) {
+                s_cameoBub = true;
+                s_cameoBX = lastBubbleX; s_cameoBY = lastBubbleY; s_cameoBW = lastBubbleW; s_cameoBH = lastBubbleH;
+            }
         }
     }
     s_cameo = false;
 }
 
+bool cameoBubble(int& x, int& y, int& w, int& h) {
+    if (!s_cameoBub) return false;
+    x = s_cameoBX; y = s_cameoBY; w = s_cameoBW; h = s_cameoBH;
+    return true;
+}
+
 void deferBubble(bool on) { s_bubbleDefer = on; }
+// The FONTS page's preview: his bubble exactly as he would say `text`, with
+// no tail and the pop already over.
+void drawSampleBubble(TFT_eSPI& t, int cx, int topY, const char* text) {
+    speechFace(t, text);
+    drawBubbleIn(t, cx, topY, text, bubbleStart + BUBBLE_POP_MS, false, NO_TAIL);
+    Theme::bubbleFontOff(t);
+    t.setTextSize(1);
+}
+// How tall his bubble comes out for `text` on this panel, without drawing
+// it: the same font, size and wrap width drawBubbleIn() uses.
+int bubbleHeight(TFT_eSPI& t, const char* text) {
+    speechFace(t, text);
+    const int k = Theme::speechScale();
+    t.setTextSize(k);
+    t.setTextWrap(false);
+    const int screenW = t.width();
+    int maxW = screenW - 16;
+    if (k > 1 && maxW > screenW - 2 * CORNER_W - 2) maxW = screenW - 2 * CORNER_W - 2;
+    int h;
+    if (t.textWidth(text) <= maxW - 10) {
+        h = Theme::speechTextH() * k + 6;
+    } else {
+        char lines[BUBBLE_MAX_LINES][48];
+        const uint8_t n = Theme::wrapText(t, text, maxW - 10, lines, k > 1 ? BUBBLE_MAX_LINES : 2);
+        h = 6 + (int)n * (Theme::speechTextH() * k + 1);
+    }
+    Theme::bubbleFontOff(t);
+    t.setTextSize(1);
+    return h;
+}
+// tick()'s own bubble again, exactly as it drew it this frame (same text,
+// place and moment, so the same pixels), for a caller that has drawn
+// somebody over it since.
+void redrawOwnBubble(TFT_eSPI& t, uint32_t now) {
+    if (!s_ownLine) return;
+    drawBubble(t, s_ownCx, s_ownTopY, s_ownLine, now, true, s_ownTail);
+}
 void drawDeferredBubble(TFT_eSPI& t, uint32_t now) {
     if (!s_deferLine) return;
     drawBubble(t, s_deferCx, s_deferY, s_deferLine, now, false, s_deferTail);
@@ -8696,6 +8814,7 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
                     s_thSqAt = now;
                     s_thSqK  = s_thVY > 0.9f ? 1.0f : s_thVY / 0.9f;
                     if (s_thVY > s_thHard) s_thHard = s_thVY;
+                    if (s_thBounces == 0) Sound::play(Sound::Id::LAND);   // the first hit only
                     if (s_thVY > 0.22f && s_thBounces < 4) {
                         s_thVY = -s_thVY * 0.42f;
                         s_thVX *= 0.7f;
@@ -8879,6 +8998,10 @@ void tick(TFT_eSPI& t, int cx, int topY, int availHeight, uint32_t now,
         else                 drawBubble(t, cx, topY, bubbleText, now, true,
                                         s_visiting ? bodyCx : NO_TAIL);
     }
+    // Kept for redrawOwnBubble(): a visit draws the visitor after this, and
+    // he stood on top of these words (seen on the 3.5", 2026-10-11).
+    s_ownLine = (showBubble && !s_onboardActive) ? bubbleText : nullptr;
+    s_ownCx = cx; s_ownTopY = topY; s_ownTail = s_visiting ? bodyCx : NO_TAIL;
     // Only what this call itself drew. A bubble that is held, or still
     // popping in, returns before recording anything, and the rectangle
     // left in lastBubble* is then somebody else's.

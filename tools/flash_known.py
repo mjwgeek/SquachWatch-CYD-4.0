@@ -16,6 +16,7 @@ import os, subprocess, sys
 BOARDS = {
     "d4:8a:fc:c8:e5:e4": ("cyd-fast",    "soak, 2.8in ST7789"),
     "8c:94:df:4e:84:10": ("cyd-fast",    "2.8in ST7789, the newer one"),
+    "8c:94:df:4e:ec:ec": ("cyd-ili9341", "2.8in ILI9341, no 80 MHz (the fast build showed a wrong picture, 2026-10-14)"),
     "78:42:1c:94:e7:5c": ("rlphantom-r", "RL Phantom 2.4in, resistive"),
     "78:42:1c:8e:df:f8": ("awok",        "AWOK, touch on the display bus"),
     "88:57:21:2e:ba:34": ("cyd-ili9341", "2.8in ILI9341, no 80 MHz"),
@@ -133,7 +134,7 @@ def main():
                             "0x8000", os.path.join(build, "partitions.bin"),
                             "0xe000", boot_app0,
                             "0x10000", os.path.join(build, "firmware.bin")], cwd=ROOT)
-    elif env == "nm-cyd-c5":
+    elif env in ("nm-cyd-c5", "marauder-v8"):
         # The C5's toolchain (pioarduino) installs its own core into whatever
         # penv runs it, and run from the shared one it broke `pio` for every
         # board (2026-10-02). It lives in a core dir of its own, and its
@@ -145,6 +146,10 @@ def main():
             sys.exit("the C5 builds from %s; make that venv first (pip install pioarduino)" % pio)
         e = {k: v for k, v in os.environ.items() if k != "MSYSTEM"}
         e["PLATFORMIO_CORE_DIR"] = core
+        # esptool 5 draws its progress with characters a Windows console's
+        # code page cannot encode; the print raised and the upload sat hung
+        # with the port open (the Marauder V8, 2026-10-12).
+        e["PYTHONIOENCODING"] = "utf-8"
         r = subprocess.run([pio, "run", "-e", build_env, "-t", "upload", "--upload-port", port], cwd=ROOT, env=e)
     else:
         r = subprocess.run([PIO, "run", "-e", build_env, "-t", "upload", "--upload-port", port], cwd=ROOT)

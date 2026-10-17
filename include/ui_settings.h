@@ -4,6 +4,15 @@
 #include <TFT_eSPI.h>
 #include "detection.h"
 
+// The speaker's two rows: on the boards with one, and in the emulator, where
+// they are listed only with SQUACHSIM_SPEAKER set (for the release clip) so
+// the web emulator never offers a sound it cannot make.
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || defined(TDECK_PLUS) || !defined(ESP32)
+#define SQW_SOUND_ROWS 1
+#else
+#define SQW_SOUND_ROWS 0
+#endif
+
 enum class SettingsRow : uint8_t {
     THEME = 0,
     BACKGROUND,
@@ -88,7 +97,9 @@ void uiSettingsScroll(int delta);     // positive = scroll down
 // Each page keeps its OWN scroll position, so leaving a page and coming back
 // puts you where you were instead of at the top -- the list is long enough
 // that losing your place was the most-felt annoyance on this screen.
-enum class SettingsPage : uint8_t { MAIN = 0, APPEARANCE = 1, SYSTEM = 2, DESK = 3, WATCH = 4 };
+enum class SettingsPage : uint8_t { MAIN = 0, APPEARANCE = 1, SYSTEM = 2, DESK = 3, WATCH = 4, FONTS = 5 };
+// Where UP goes from a page: FONTS sits inside APPEARANCE, the rest inside MAIN.
+SettingsPage uiSettingsParentPage();
 void         uiSettingsOpenPage(SettingsPage p);
 SettingsPage uiSettingsCurrentPage();
 
@@ -119,6 +130,19 @@ bool uiSettingsTapPinnedOk(int x, int y, int screenW, int screenH);
 // just the screen dimensions) since row height now depends on actual
 // font metrics -- same reasoning as ui_rawscan.cpp's uiRawScanRowAt().
 SettingsRow uiSettingsHitTest(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+// The stepper rows (BRIGHT, VOLUME) carry a real - and + button each. For a
+// tap that uiSettingsHitTest put on one of those rows: -1 on the minus, +1
+// on the plus, 0 anywhere else on the row -- which does nothing, so a thumb
+// resting on the label never nudges the value.
+int uiSettingsStepHit(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+bool uiSettingsIsStepper(SettingsRow r);
+// The FONTS page's sliders: a tap on a FONT_ row's - or + steps it, a tap on
+// its track jumps to the nearest stop. Call for a tap uiSettingsHitTest put
+// on one of those rows.
+void uiSettingsFontTap(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+// Which kind the preview box shows (Settings::FontKind as a number); a slider
+// tap sets it. For the emulator's shots of each.
+void uiSettingsSetFontPreview(uint8_t kind);
 
 // ---- confirmation panel ---------------------------------------------------
 // Two rows here cannot be taken back by tapping them again: CALIBRATE TOUCH

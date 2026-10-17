@@ -184,7 +184,14 @@ bool asyncBegin(TFT_eSPI& tft);
 bool asyncSubmit(const uint8_t* src, int32_t w, int32_t h, int32_t x, int32_t y);
 void asyncWait();                 // until the panel holds the last frame handed over
 bool asyncOn();
+// Before busLock() from something that cannot wait a whole frame (the LoRa
+// radio): a push in flight finishes its current chunk and steps aside.
+void busWant();
 void busLock();
 void busUnlock();
+// Whether the panel's device holds the IDF driver's bus right now (a frame in
+// flight, the radio let in between its chunks). A caller that needs that hold
+// for a register-fed transfer takes one only when this is false.
+bool pushHoldsBus();
 
 }  // namespace FramePush

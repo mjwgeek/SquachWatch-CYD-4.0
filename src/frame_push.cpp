@@ -387,8 +387,16 @@ static bool pushDma(TFT_eSPI& tft, int32_t w) {
 // printed. This pass goes through the driver's POLLING transmit instead --
 // no interrupt, the driver spins on the hardware itself -- and says where it
 // is, to tell "the transfer never starts" from "the interrupt never comes".
-static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows) {
+// Returns the rows sent. Fewer than asked when something else asked for the
+// bus (busWant()): the chunk in flight finishes, the rest waits -- the caller
+// steps aside and sets the window again for what is left. A LoRa radio on
+// this bus has a preamble to catch, and the ~30 ms of a whole frame was too
+// long to wait (the T-Deck heard MeshCore's preambles and missed every
+// header, 2026-10-12); a chunk is about a millisecond.
+static void busStepAside();   // below, with the bus mutex it hands over
+static int32_t pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows) {
     (void)tft;
+    int32_t pushed = 0;
     // Queued, interrupt-driven, and pipelined: this chunk converts into one
     // bounce buffer while the one before is on the wire from the other, and
     // the wait for each is a block, not a spin -- the task sleeping here is
@@ -433,7 +441,9 @@ static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows
         inFlight = true;
         p += px;
         rows -= n;
+        pushed += n;
         k++;
+        if (s_busWanted && rows > 0) break;   // the radio is waiting: let it in after this chunk
     }
     if (inFlight) { spi_transaction_t* done = nullptr; spi_device_get_trans_result(dmaHAL, &done, portMAX_DELAY); }
 #if defined(NM_CYD_C5)
@@ -587,6 +597,19 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
         // get in between chunks.
         if (dma) spi_device_acquire_bus(dmaHAL, portMAX_DELAY);
 #endif
+#if SQW_PUSH_DMA && !SQW_PUSH_QSPI
+        // The bus for the whole frame: the driver's per-transfer lock is a
+        // scheduling point, and on one core that is where the radio tasks
+        // get in between chunks.
+        // On the T-Deck the hold is taken once and KEPT: its radio shares
+        // this host and works in the gaps between chunks and frames, and the
+        // driver's interrupt handler wakes "the device holding the bus" on
+        // its way out of every transaction -- with that changing hands every
+        // frame it dereferenced a stale one, LoadProhibited in
+        // spi_bus_lock_bg_exit every 15 s to 6 min (the black box,
+        // 2026-10-13). Nothing else on that board is a device of this driver.
+        if (dma && !s_pushHolds) { spi_device_acquire_bus(dmaHAL, portMAX_DELAY); s_pushHolds = true; }
+#endif
         for (int i = 0; i < n; i++) {
             const int32_t r0 = spans[i].r0, r1 = spans[i].r1;
 #if SQW_PUSH_QSPI
@@ -598,8 +621,29 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
 #endif
 #if SQW_PUSH_DMA && !SQW_PUSH_QSPI
             if (dma) {
-                pushRowsDma(tft, src + (size_t)r0 * (size_t)w, w, r1 - r0);
-                s_lastRows += r1 - r0;
+                int32_t at = r0;
+                while (at < r1) {
+                    const int32_t did = pushRowsDma(tft, src + (size_t)at * (size_t)w, w, r1 - at);
+                    s_lastRows += did;
+                    at += did;
+                    if (did == 0 || at >= r1) break;
+                    // Stepping aside: the bus and the panel's select released,
+                    // the lock handed over for as long as the other side needs
+                    // it, then everything taken back and the window set for
+                    // the rows still to go. Only when this task holds the lock
+                    // (the pusher); a caller pushing synchronously carries on.
+                    // The device's hold on the driver is KEPT across the
+                    // hand-over: the T-Deck's radio sends its bytes through
+                    // the host's registers under that hold, the way the
+                    // library's own window writes do. Giving the hold up and
+                    // taking it back here, and the radio taking one of its own,
+                    // hundreds of times a second, ended in the driver's
+                    // interrupt handler on an empty device entry (2026-10-13).
+                    tft.endWrite();
+                    busStepAside();
+                    tft.startWrite();
+                    tft.setAddrWindow(x, y + at, w, r1 - at);
+                }
                 continue;
             }
 #endif
@@ -716,6 +760,8 @@ void asyncWait() {
 void busLock()   { if (s_bus) xSemaphoreTakeRecursive(s_bus, portMAX_DELAY); }
 void busUnlock() { if (s_bus) xSemaphoreGiveRecursive(s_bus); }
 #else
+void busWant() {}
+bool pushHoldsBus() { return false; }
 bool asyncBegin(TFT_eSPI&) { return false; }
 bool asyncOn() { return false; }
 bool asyncSubmit(const uint8_t*, int32_t, int32_t, int32_t, int32_t) { return false; }
@@ -740,6 +786,7 @@ bool asyncBegin(TFT_eSPI&) { return false; }
 bool asyncOn() { return false; }
 bool asyncSubmit(const uint8_t*, int32_t, int32_t, int32_t, int32_t) { return false; }
 void asyncWait() {}
+void busWant() {}
 void busLock() {}
 void busUnlock() {}
 

@@ -62,4 +62,14 @@ namespace Pet {
     // flings of a pet inside a minute call it; so do the console's JAIL and
     // the emulator.
     void arrest(uint32_t now);
+
+    // The yeti's dances (pet_yeti.inc): 0 SATURDAY NIGHT YETI, 1 THE FLOSS.
+    // He dances it now if he is standing there, otherwise he comes on next
+    // and dances it. The console's YETI DISCO / YETI FLOSS and the emulator.
+    void yetiDance(int8_t which);
+
+    // MEATY's shapes on demand (pet_meaty.inc): 0 the igloo, 1 the hot dog,
+    // 2 Shake it, 3 three of him. The console's MEATY IGLOO and the rest, and
+    // the emulator.
+    void meatyAct(int8_t which);
 }
