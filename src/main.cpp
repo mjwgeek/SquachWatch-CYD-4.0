@@ -3234,18 +3234,18 @@ void setup() {
 #endif
         // The frame does not exist yet on the 3.5", so that board checks
         // without the message rather than with a garbled one.
-        if (panelTextOk()) {
-            PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
-            PANEL.setTextSize(1);
-            PANEL.setTextWrap(false);
-            PANEL.setTextColor(Theme::CYAN, Theme::BG);
+        if ((true)) {
+            tft.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
+            tft.setTextSize(1);
+            tft.setTextWrap(false);
+            tft.setTextColor(Theme::CYAN, Theme::BG);
             const char* m = "CHECKING FOR UPDATES...";
-            PANEL.setCursor((tft.width() - PANEL.textWidth(m)) / 2, tft.height() / 2 - 4);
-            PANEL.print(m);
-            panelShow();
+            tft.setCursor((tft.width() - tft.textWidth(m)) / 2, tft.height() / 2 - 4);
+            tft.print(m);
+            ((void)0);
         }
         OtaWifi::bootCheck(9000);
-        if (panelTextOk()) { PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG); panelShow(); }
+        if ((true)) { tft.fillRect(0, 0, tft.width(), tft.height(), Theme::BG); ((void)0); }
     }
 
 
@@ -3440,12 +3440,12 @@ void setup() {
     // make touch too inaccurate to reliably re-tap a "recalibrate"
     // button, so this needs no precision at all — just a hold anywhere
     // during the window right after boot.
-    PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
-    PANEL.setTextColor(Theme::AMBER, Theme::BG);
-    PANEL.setTextSize(1);
-    PANEL.setCursor(4, 4);
-    PANEL.print("Hold anywhere now to reset touch calibration...");
-    panelShow();
+    tft.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
+    tft.setTextColor(Theme::AMBER, Theme::BG);
+    tft.setTextSize(1);
+    tft.setCursor(4, 4);
+    tft.print("Hold anywhere now to reset touch calibration...");
+    ((void)0);
     {
         uint32_t holdStart = 0;
         uint32_t windowStart = millis();
@@ -3469,13 +3469,13 @@ void setup() {
                     // straight back.
                     clearTftEspiBlobs();
 #endif
-                    PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
-                    PANEL.setTextColor(Theme::AMBER, Theme::BG);
-                    PANEL.setTextSize(2);
+                    tft.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
+                    tft.setTextColor(Theme::AMBER, Theme::BG);
+                    tft.setTextSize(2);
                     const char* msg = "CALIBRATION RESET";
-                    PANEL.setCursor((tft.width() - PANEL.textWidth(msg)) / 2, tft.height() / 2 - 8);
-                    PANEL.print(msg);
-                    panelShow();
+                    tft.setCursor((tft.width() - tft.textWidth(msg)) / 2, tft.height() / 2 - 8);
+                    tft.print(msg);
+                    ((void)0);
                     delay(1200);
                     break;
                 }
@@ -3485,8 +3485,8 @@ void setup() {
             delay(10);
         }
     }
-    PANEL.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
-    panelShow();
+    tft.fillRect(0, 0, tft.width(), tft.height(), Theme::BG);
+    ((void)0);
 
     // Touch calibration. Every board gets the five-target calibration once:
     // at first boot, and once more after updating from a firmware that used
@@ -5691,7 +5691,6 @@ void loop() {
                         case SettingsRow::CLOCK_FONT:     Settings::cycleClockFont();     break;
                         case SettingsRow::CLOCK_SIZE:     Settings::cycleClockSize();     break;
                         case SettingsRow::CLOCK_BACKDROP: Settings::cycleClockBackdrop(); break;
-                        case SettingsRow::CLOCK_FORMAT:  Settings::toggleClock24Hour();   break;
 #if SQUACH_MESH
                         case SettingsRow::DESK_SQUAD:   Settings::toggleDeskSquad();     break;
                         case SettingsRow::DESK_CROWD:   Settings::cycleDeskCrowd();      break;
