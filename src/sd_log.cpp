@@ -1,6 +1,11 @@
 // SquachWatch-CYD — SD log implementation
 #include "sd_log.h"
 #include "frame_push.h"   // busLock(): the card shares the panel's bus
+#include "sd_row.h"
+#include "clock.h"
+#if defined(CYD_GPS)
+#include "gnss.h"
+#endif
 #include <SD.h>
 #if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
 // The Freenove S3's slot is wired for SDMMC, not SPI: every card call in this
@@ -38,6 +43,8 @@ extern TFT_eSPI tft;
     #define SD_CS_PIN 14
 #elif defined(NM_CYD_C5)
     #define SD_CS_PIN 10
+#elif defined(TDECK_PLUS)
+    #define SD_CS_PIN 39   // on the display's bus (40/38/41), per LilyGo's utilities.h
 #else
     #define SD_CS_PIN 5
 #endif
@@ -140,6 +147,11 @@ bool SdLog::begin() {
     // the additive GPIO-matrix attach the comment above warns about lands on
     // the display's own chip select.
     if (!SD.begin(SD_CS_PIN, tft.getSPIinstance(), 4000000, "/sd", SD_MAX_FILES)) {
+#elif defined(TDECK_PLUS)
+    // The T-Deck's slot is on the DISPLAY's bus too (SCK 40, MISO 38, MOSI 41,
+    // CS 39), with the SX1262 beside it on CS 9: the same shared-bus treatment
+    // as the C5 above, TFT_eSPI's own instance and nothing extra attached.
+    if (!SD.begin(SD_CS_PIN, tft.getSPIinstance(), 4000000, "/sd", SD_MAX_FILES)) {
 #elif defined(AWOK)
     if (!SD.begin(SD_CS_PIN, SPI, 4000000, "/sd", SD_MAX_FILES)) {
 #else
@@ -165,9 +177,10 @@ bool SdLog::begin() {
 
 void SdLog::openDaily() {
     if (!_ready) return;
-    uint32_t t = millis();
-    uint32_t day = t / (24UL * 60UL * 60UL * 1000UL);
-    snprintf(_filename, sizeof(_filename), "/squachwatch-%lu.log", (unsigned long)day);
+    // Named for the local date once the clock is trusted. A guessed clock
+    // gets the nodate file, because its date can be days behind.
+    _day = Clock::trusted() ? Clock::localDay() : 0;
+    SdRow::fileName(_filename, sizeof(_filename), _day);
 #if defined(NM_CYD_C5)
     // Say what is already on the card for today. Mounting proves the card
     // answers; it does not prove a single row ever reached it, and until this
@@ -210,25 +223,18 @@ void SdLog::logEvent(const Detection& d) {
 #endif
         return;
     }
-    char line[96];
-    char mac[18];
-    snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-             d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5]);
-    // Sanitize any commas in vendor / name
-    char vendorSafe[12], nameSafe[20];
-    strncpy(vendorSafe, vendorText(d), sizeof(vendorSafe) - 1); vendorSafe[sizeof(vendorSafe)-1] = 0;
-    strncpy(nameSafe,   d.name,   sizeof(nameSafe)   - 1); nameSafe[sizeof(nameSafe)-1]   = 0;
-    for (char* p = vendorSafe; *p; p++) if (*p == ',') *p = '.';
-    for (char* p = nameSafe;   *p; p++) if (*p == ',') *p = '.';
-    snprintf(line, sizeof(line),
-             "%lu,%s,%d,%s,%u,%s,%s\n",
-             (unsigned long)millis(),
-             detectionTypeName(d.type),
-             d.rssi,
-             mac,
-             d.channel,
-             vendorSafe,
-             nameSafe);
+    char line[SdRow::ROW_MAX];
+#if defined(CYD_GPS)
+    // Where the board is now. The queue drains on the loop task within a
+    // frame or two of the detection, so this is where it was seen.
+    SdRow::line(line, sizeof(line), d,
+                Clock::trusted() ? Clock::nowEpoch() : 0, millis(),
+                &Gnss::fix(), Gnss::faked(), millis());
+#else
+    SdRow::line(line, sizeof(line), d,
+                Clock::trusted() ? Clock::nowEpoch() : 0, millis(),
+                nullptr, false, 0);
+#endif
     f.print(line);
     f.close();
     FramePush::busUnlock();
@@ -238,8 +244,8 @@ void SdLog::wipe() {
     if (!_ready) return;
     FramePush::busLock();
     // Walk the root and remove every file this firmware writes. Names are
-    // /squachwatch-YYYYMMDD.log; matching on the prefix takes them all rather
-    // than only today's, which is the whole point of a wipe.
+    // /squachwatch-YYYYMMDD.log and /squachwatch-nodate.log; matching on the
+    // prefix takes every day's file, which is the whole point of a wipe.
     File dir = CARD.open("/");
     if (!dir) { FramePush::busUnlock(); return; }
     // Collect first, then remove: deleting while iterating openNextFile() is
@@ -269,11 +275,9 @@ void SdLog::tick() {
     uint32_t now = millis();
     if (now - _lastFlush > 5000) {
         _lastFlush = now;
-        // Reopen daily file once an hour (or on day change)
-        static uint32_t lastDayCheck = 0;
-        if (now - lastDayCheck > 3600000) {
-            lastDayCheck = now;
-            openDaily();
-        }
+        // A new file at local midnight, and the moment the clock is first
+        // trusted (nodate to the real date).
+        uint32_t day = Clock::trusted() ? Clock::localDay() : 0;
+        if (day != _day || _filename[0] == '\0') openDaily();
     }
 }
