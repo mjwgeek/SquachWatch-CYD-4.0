@@ -729,15 +729,6 @@ void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
         body = t.textWidth(label) <= w - 6;
         if (!body) bodyFontOff(t);
     }
-    // A large panel's label that cannot take size 2 gets font 2 rather than
-    // the 8-row system font: about as wide, half again as tall.
-    bool body = false;
-    if (ts == 1 && textSize == 1 && large() && h >= 20) {
-        t.setTextFont(2);
-        t.setTextSize(1);
-        body = t.textWidth(label) <= w - 6;
-        if (!body) t.setTextFont(1);
-    }
     // FONTS > BUTTONS moves that along the label faces, measured against
     // the box like the step-up above.
     uint8_t font = body ? 2 : 1;
