@@ -379,7 +379,11 @@ const char* soundModeName() {
     return N[s_soundMode < 3 ? s_soundMode : 0];
 }
 void cycleSoundMode() { s_soundMode = (uint8_t)((s_soundMode + 1) % 3); s_prefs.putUChar("sndMode", s_soundMode); }
+// The Hosyond fork already has a board-specific four-step speaker volume
+// API. Do not create a second identical symbol with different semantics.
+#if !defined(CYD40)
 uint8_t soundVolume() { return s_soundVol; }
+#endif
 void adjustSoundVolume(int8_t delta) {
     int16_t v = (int16_t)s_soundVol + delta;
     if (v < 0) v = 0;
