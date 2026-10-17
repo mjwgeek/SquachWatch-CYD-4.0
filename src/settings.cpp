@@ -33,13 +33,13 @@ static bool        s_pocketNoteShown = false;
 // Locked on the CrowPanel too, for a different reason: an RGB panel has no
 // MADCTL, so rotating it would be a per-pixel software transform of an
 // 800x480 buffer every frame -- and the panel is natively landscape anyway.
-#if defined(TWATCH_S3) || defined(CROWPANEL7)
+// And on the T-Deck: a keyboard under the screen has exactly one way up.
+#if defined(TWATCH_S3) || defined(CROWPANEL7) || defined(TDECK_PLUS)
 static const bool DEFAULT_ROTATION_LOCK = true;
 #else
 static const bool DEFAULT_ROTATION_LOCK = false;
 #endif
 static bool        s_rotationLocked = DEFAULT_ROTATION_LOCK;
-static bool        s_topHat = true;
 static bool        s_aura = true;
 static bool        s_detXp = true;
 // Eight is the ceiling because the radio's own squad ring holds eight (see
@@ -47,7 +47,7 @@ static bool        s_detXp = true;
 // the hardware cannot hear: the ninth board in the room evicts the first, and
 // the screen would still show eight.
 static const uint8_t CROWD_MAX = 8;
-static uint8_t     s_meshCrowd = 1;   // how many on screen at once, 1..CROWD_MAX
+static uint8_t     s_meshCrowd = 1;   // how many on screen at once, 1..CROWD_MAX; 0 = NONE
 static bool        s_deskSquad     = false;   // the squad on the desk clock as well
 static uint8_t     s_deskCrowd     = 1;       // the desk's own HOW MANY
 static bool        s_deskFullVisit = false;   // one visitor: the whole visit, not a chat
@@ -70,6 +70,14 @@ static bool        s_deskActive = false;
 static uint8_t     s_clockFont     = 0;   // 0 segments, 1 Bangers
 static uint8_t     s_clockSize     = 1;   // 0 small, 1 medium, 2 large
 static uint8_t     s_clockBackdrop = 0;   // 0 plain, 1 rain, 2 snow, 3 toasters, 4 fire, 5 stars, 6 fireflies
+static bool        s_clock24Hour   = false;
+// FONTS: per kind of text, 0..4 for -2..+2 around the built size (2 is as
+// built). Keys fntMenu, fntText, fntBtn, fntBub, fntXp, fntPet. And a face
+// per kind, 0 as built, 1 PIXEL, 2 SMOOTH: keys fcMenu .. fcPet.
+static uint8_t     s_fontStep[(int)FontKind::COUNT] = { 2, 2, 2, 2, 2, 2 };
+static uint8_t     s_fontFace[(int)FontKind::COUNT] = { 0, 0, 0, 0, 0, 0 };
+static const char* const FONT_KEYS[(int)FontKind::COUNT] = { "fntMenu", "fntText", "fntBtn", "fntBub", "fntXp", "fntPet" };
+static const char* const FACE_KEYS[(int)FontKind::COUNT] = { "fcMenu", "fcText", "fcBtn", "fcBub", "fcXp", "fcPet" };
 static const uint8_t CLOCK_BG_N  = 7;
 // Bit N = DetectionType N enabled. UNKNOWN (0) is never included -- see
 // Types that arrive switched OFF, on a fresh install and on upgrade alike.
@@ -169,6 +177,9 @@ static uint8_t  s_radioDutyIx  = RADIO_DUTY_DEFAULT;
 // Opt in. The one setting here that can make a sound, so it starts off and
 // stays off until somebody finds the row. Only the CrowPanel 7 shows it.
 static bool     s_buzzer       = false;
+// The speaker (sound.h): off until somebody finds the row, MED when they do.
+static uint8_t  s_soundMode    = 0;    // 0 OFF, 1 ALERTS, 2 ALL
+static uint8_t  s_soundVol     = 25;   // percent: the speaker is loud, so it starts low
 
 // ---- LoRa -----------------------------------------------------------------
 // SURVEY by default: the detector posture, everything in the band. FOCUS is
@@ -177,6 +188,7 @@ static uint8_t  s_loraMode     = 2;
 static uint8_t  s_loraFocus    = 0;
 static uint8_t  s_loraRegion   = 0;   // AUTO
 static uint8_t  s_loraListen   = 3;   // BOTH
+static uint8_t  s_loraTx       = 0;   // LORA TX: 0 off, else dBm
 // The online lookups, all four OFF. See Settings::loraLookups() for why the
 // default is the opposite of the update check's.
 static bool     s_loraLookups  = false;
@@ -187,10 +199,6 @@ static bool     s_loraLkFeed   = false;
 // ---- status light --------------------------------------------------------
 static bool    s_lightOn     = true;
 static bool    s_lightAlerts = true;
-#if defined(CYD40)
-static bool    s_soundAlerts = true;
-static uint8_t s_soundVolume = 1;   // MED
-#endif
 static bool    s_lightMsgs   = true;
 static uint8_t s_lightIdle   = 1;    // BREATHE
 static uint8_t s_lightColor  = 0;    // THEME
@@ -360,6 +368,20 @@ void toggleWakeOnAlert() {
 }
 bool buzzerOn()     { return s_buzzer; }
 void toggleBuzzer() { s_buzzer = !s_buzzer; s_prefs.putBool("buzzer", s_buzzer); }
+uint8_t soundMode() { return s_soundMode; }
+const char* soundModeName() {
+    static const char* const N[] = { "OFF", "ALERTS", "ALL" };
+    return N[s_soundMode < 3 ? s_soundMode : 0];
+}
+void cycleSoundMode() { s_soundMode = (uint8_t)((s_soundMode + 1) % 3); s_prefs.putUChar("sndMode", s_soundMode); }
+uint8_t soundVolume() { return s_soundVol; }
+void adjustSoundVolume(int8_t delta) {
+    int16_t v = (int16_t)s_soundVol + delta;
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    s_soundVol = (uint8_t)v;
+    s_prefs.putUChar("sndLvl", s_soundVol);
+}
 uint8_t loraMode()  { return s_loraMode; }
 void cycleLoraMode() { s_loraMode = (uint8_t)((s_loraMode + 1) % 3); s_prefs.putUChar("loraMode", s_loraMode); }
 uint8_t loraListen() { return s_loraListen; }
@@ -369,10 +391,17 @@ void cycleLoraListen() {
     s_loraListen = NEXT[s_loraListen & 3];
     s_prefs.putUChar("loraLstn", s_loraListen);
 }
+void setLoraListen(uint8_t v) { s_loraListen = v & 3; s_prefs.putUChar("loraLstn", s_loraListen); }
 const char* loraListenName() {
     static const char* const N[4] = { "OFF", "MESHTASTIC", "MESHCORE", "BOTH" };
     return N[s_loraListen & 3];
 }
+uint8_t loraTxDbm() { return s_loraTx; }
+void cycleLoraTx() {
+    s_loraTx = s_loraTx == 0 ? 10 : s_loraTx == 10 ? 20 : 0;
+    s_prefs.putUChar("loraTx", s_loraTx);
+}
+const char* loraTxName() { return s_loraTx == 0 ? "OFF" : s_loraTx == 10 ? "10 dBm" : "20 dBm"; }
 uint8_t loraRegion() { return s_loraRegion; }
 void setLoraRegion(uint8_t r) { s_loraRegion = r > 2 ? 0 : r; s_prefs.putUChar("loraRgn", s_loraRegion); }
 uint8_t loraFocus() { return s_loraFocus; }
@@ -458,7 +487,7 @@ void load() {
     // Both off unless asked for. See the note in settings.h.
     s_meshDetect   = s_prefs.getBool("meshrx", false);
     s_meshCrowd    = s_prefs.getUChar("crowd", 1);
-    if (s_meshCrowd < 1 || s_meshCrowd > CROWD_MAX) s_meshCrowd = 1;
+    if (s_meshCrowd > CROWD_MAX) s_meshCrowd = 1;
     // Two draws exactly what one does -- see cycleMeshCrowd(). An older build
     // could not have stored it, but a hand-edited NVS can, and a setting that
     // does nothing is worse than one that moved.
@@ -467,7 +496,8 @@ void load() {
     // Follows the main screen's until the desk has one of its own: the two
     // were one setting, and a board upgraded mid-use should look the same.
     s_deskCrowd     = s_prefs.getUChar("dskcrwd", s_meshCrowd);
-    if (s_deskCrowd < 1 || s_deskCrowd > CROWD_MAX || s_deskCrowd == 2) s_deskCrowd = s_meshCrowd;
+    // NONE is the main screen's alone (the desk has SQUAD ON DESK for that).
+    if (s_deskCrowd < 1 || s_deskCrowd > CROWD_MAX || s_deskCrowd == 2) s_deskCrowd = s_meshCrowd ? s_meshCrowd : 1;
     s_deskFullVisit = s_prefs.getBool("dskvisit", false);
     s_meshTransmit = s_prefs.getBool("meshtx", false);
     s_meshConsent  = s_prefs.getBool("meshok", false);
@@ -481,16 +511,25 @@ void load() {
     s_rotationLocked = s_prefs.getBool("rotlock", DEFAULT_ROTATION_LOCK);
     // A new key, not the top hat's: somebody who took the hat off never said
     // anything about the aura, and should see it once before deciding.
-    s_topHat = s_prefs.getBool("tophat", true);
     s_aura           = s_prefs.getBool("aura", true);
     s_detXp          = s_prefs.getBool("detxp", true);
     s_rotation = s_prefs.getUChar("rot", DEFAULT_ROTATION);
     if (s_rotation > 3) s_rotation = DEFAULT_ROTATION;
+#if defined(TDECK_PLUS)
+    s_rotation = DEFAULT_ROTATION;   // landscape, keyboard down: the one way the T-Deck is held
+#endif
     s_backgroundLocked = s_prefs.getBool("bglock", false);
     s_deskBg = s_prefs.getUChar("deskBg", 255);
     s_clockFont     = s_prefs.getUChar("clkfont", 0);
     s_clockSize     = s_prefs.getUChar("clksize", 1);
+    for (int i = 0; i < (int)FontKind::COUNT; i++) {
+        s_fontStep[i] = s_prefs.getUChar(FONT_KEYS[i], 2);
+        if (s_fontStep[i] > 4) s_fontStep[i] = 2;
+        s_fontFace[i] = s_prefs.getUChar(FACE_KEYS[i], 0);
+        if (s_fontFace[i] > 2) s_fontFace[i] = 0;
+    }
     s_clockBackdrop = s_prefs.getUChar("clkbg", 0);
+    s_clock24Hour   = s_prefs.getBool("clk24", false);
     if (s_clockFont > 1)     s_clockFont = 0;
     if (s_clockSize > 2)     s_clockSize = 1;
     if (s_clockBackdrop >= CLOCK_BG_N) s_clockBackdrop = 0;
@@ -552,12 +591,18 @@ void load() {
     // The T-Watch's BUZZ (haptics on an alert) already owns "buzz", and with
     // the opposite default, so the CrowPanel's buzzer keeps its own key.
     s_buzzer       = s_prefs.getBool("buzzer", false);
+    s_soundMode    = s_prefs.getUChar("sndMode", 0);
+    if (s_soundMode > 2) s_soundMode = 0;
+    s_soundVol     = s_prefs.getUChar("sndLvl", 25);
+    if (s_soundVol > 100) s_soundVol = 25;
     s_loraMode     = s_prefs.getUChar("loraMode", 2);
     if (s_loraMode > 2) s_loraMode = 2;
     s_loraFocus    = s_prefs.getUChar("loraFocus", 0);
     s_loraRegion   = s_prefs.getUChar("loraRgn", 0);
     s_loraListen   = s_prefs.getUChar("loraLstn", 3);
     if (s_loraListen > 3) s_loraListen = 3;
+    s_loraTx = s_prefs.getUChar("loraTx", 0);
+    if (s_loraTx != 10 && s_loraTx != 20) s_loraTx = 0;
     if (s_loraRegion > 2) s_loraRegion = 0;
     // False, every time, unless somebody has said otherwise on this board.
     s_loraLookups  = s_prefs.getBool("loraLkup", false);
@@ -566,11 +611,6 @@ void load() {
     s_loraLkFeed   = s_prefs.getBool("loraLkMcF", false);
     s_lightOn      = s_prefs.getBool("ltOn", true);
     s_lightAlerts  = s_prefs.getBool("ltAlert", true);
-#if defined(CYD40)
-    s_soundAlerts  = s_prefs.getBool("sndAlert", true);
-    s_soundVolume  = s_prefs.getUChar("sndVol", 1);
-    if (s_soundVolume > 3) s_soundVolume = 1;
-#endif
     s_lightMsgs    = s_prefs.getBool("ltMsg", true);
     s_lightIdle    = s_prefs.getUChar("ltIdle", 1);
     s_banter       = s_prefs.getUChar("banter", 2);
@@ -672,6 +712,8 @@ const char* clockBackdropName() {
 }
 void        cycleClockBackdrop() { s_clockBackdrop = (uint8_t)((s_clockBackdrop + 1) % CLOCK_BG_N); s_prefs.putUChar("clkbg", s_clockBackdrop); }
 void        cyclePrevClockBackdrop() { s_clockBackdrop = (uint8_t)((s_clockBackdrop + CLOCK_BG_N - 1) % CLOCK_BG_N); s_prefs.putUChar("clkbg", s_clockBackdrop); }
+bool        clock24Hour() { return s_clock24Hour; }
+void        toggleClock24Hour() { s_clock24Hour = !s_clock24Hour; s_prefs.putBool("clk24", s_clock24Hour); }
 
 Background deskBackground() {
     if (s_deskBg != 255 && backgroundSelectable((Background)s_deskBg)) return (Background)s_deskBg;
@@ -749,17 +791,39 @@ void markInfoPrimerShown() {
 
 bool pocketNoteShown() { return s_pocketNoteShown; }
 
+static uint8_t s_yetiFound = 0xFF;   // read on first use
+uint8_t yetiFound() {
+    if (s_yetiFound == 0xFF) s_yetiFound = s_prefs.getUChar("yetiFound", 0);
+    return s_yetiFound;
+}
+void markYetiFound(uint8_t bits) {
+    const uint8_t now = (uint8_t)(yetiFound() | bits);
+    if (now == s_yetiFound) return;
+    s_yetiFound = now;
+    s_prefs.putUChar("yetiFound", now);
+}
+
 void markPocketNoteShown() {
     s_pocketNoteShown = true;
     s_prefs.putBool("pocketnote", true);
 }
 
-bool topHatShown() { return s_topHat; }
-void toggleTopHat() { s_topHat = !s_topHat; s_prefs.putBool("tophat", s_topHat); }
-
 bool auraShown() { return s_aura; }
 
 bool detXp() { return s_detXp; }
+
+uint8_t fontStep(FontKind k) { return (uint8_t)k < (uint8_t)FontKind::COUNT ? s_fontStep[(int)k] : 1; }
+uint8_t fontFace(FontKind k) { return (uint8_t)k < (uint8_t)FontKind::COUNT ? s_fontFace[(int)k] : 0; }
+void setFontFace(FontKind k, uint8_t face) {
+    if ((uint8_t)k >= (uint8_t)FontKind::COUNT || face > 2 || s_fontFace[(int)k] == face) return;
+    s_fontFace[(int)k] = face;
+    s_prefs.putUChar(FACE_KEYS[(int)k], face);
+}
+void setFontStep(FontKind k, uint8_t step) {
+    if ((uint8_t)k >= (uint8_t)FontKind::COUNT || step > 4 || s_fontStep[(int)k] == step) return;
+    s_fontStep[(int)k] = step;
+    s_prefs.putUChar(FONT_KEYS[(int)k], step);
+}
 
 void toggleDetXp() {
     s_detXp = !s_detXp;
@@ -794,18 +858,6 @@ void toggleBackgroundLocked() {
 
 bool        lightOn()         { return s_lightOn; }
 bool        lightAlerts()     { return s_lightAlerts; }
-#if defined(CYD40)
-bool        soundAlerts()     { return s_soundAlerts; }
-uint8_t     soundVolume() { return s_soundVolume; }
-const char* soundVolumeName() {
-    static const char* const N[] = { "LOW", "MED", "HIGH", "MAX" };
-    return N[s_soundVolume < 4 ? s_soundVolume : 1];
-}
-void cycleSoundVolume() {
-    s_soundVolume = (uint8_t)((s_soundVolume + 1) % 4);
-    s_prefs.putUChar("sndVol", s_soundVolume);
-}
-#endif
 bool        lightMessages()   { return s_lightMsgs; }
 uint8_t     lightIdle()       { return s_lightIdle; }
 uint8_t     lightColor()      { return s_lightColor; }
@@ -814,9 +866,6 @@ const char* lightIdleName()   { return LIGHT_IDLE_NAMES[s_lightIdle > 2 ? 1 : s_
 const char* lightColorName()  { return LIGHT_COLOR_NAMES[s_lightColor < LIGHT_COLOR_N ? s_lightColor : 0]; }
 void toggleLight()         { s_lightOn = !s_lightOn;         s_prefs.putBool("ltOn", s_lightOn); }
 void toggleLightAlerts()   { s_lightAlerts = !s_lightAlerts; s_prefs.putBool("ltAlert", s_lightAlerts); }
-#if defined(CYD40)
-void toggleSoundAlerts()   { s_soundAlerts = !s_soundAlerts; s_prefs.putBool("sndAlert", s_soundAlerts); }
-#endif
 void toggleLightMessages() { s_lightMsgs = !s_lightMsgs;     s_prefs.putBool("ltMsg", s_lightMsgs); }
 void cycleLightIdle()      { s_lightIdle = (uint8_t)((s_lightIdle + 1) % 3);            s_prefs.putUChar("ltIdle", s_lightIdle); }
 uint8_t     banter()       { return s_banter; }
@@ -964,7 +1013,8 @@ uint8_t deskCrowd() { return s_deskCrowd; }
 static const char* crowdLabel(uint8_t n) {
     // ONE is a different thing, not a count of one: it is the ordinary visit,
     // with the set pieces and the emotes that a crowd stands down.
-    if (n <= 1) return "ONE";
+    if (n == 0) return "NONE";
+    if (n == 1) return "ONE";
     static char b[10];
     snprintf(b, sizeof b, "UP TO %u", (unsigned)n);
     return b;
@@ -988,8 +1038,11 @@ static uint8_t nextCrowd(uint8_t c) {
     if (n == 2) n = 3;
     return n;
 }
+// The main screen's goes NONE -> ONE -> 3 .. 8 -> NONE. NONE keeps everybody
+// off the screen -- no visit, no crowd -- while the squad badge, messages and
+// heads-ups carry on: one Squachy each when a desk full of boards is under test.
 void cycleMeshCrowd() {
-    s_meshCrowd = nextCrowd(s_meshCrowd);
+    s_meshCrowd = s_meshCrowd >= CROWD_MAX ? 0 : nextCrowd(s_meshCrowd);
     s_prefs.putUChar("crowd", s_meshCrowd);
 }
 void cycleDeskCrowd() {

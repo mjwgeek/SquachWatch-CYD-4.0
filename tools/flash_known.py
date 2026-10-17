@@ -16,6 +16,7 @@ import os, subprocess, sys
 BOARDS = {
     "d4:8a:fc:c8:e5:e4": ("cyd-fast",    "soak, 2.8in ST7789"),
     "8c:94:df:4e:84:10": ("cyd-fast",    "2.8in ST7789, the newer one"),
+    "8c:94:df:4e:ec:ec": ("cyd-ili9341", "2.8in ILI9341, no 80 MHz (the fast build showed a wrong picture, 2026-10-14)"),
     "78:42:1c:94:e7:5c": ("rlphantom-r", "RL Phantom 2.4in, resistive"),
     "78:42:1c:8e:df:f8": ("awok",        "AWOK, touch on the display bus"),
     "88:57:21:2e:ba:34": ("cyd-ili9341", "2.8in ILI9341, no 80 MHz"),
@@ -58,6 +59,16 @@ BOARDS = {
     # line): ST77922 over QSPI, touch in the panel chip. Bring-up began
     # 2026-10-09.
     "b8:1f:3f:c3:fd:58": ("freenove-s3-35", "Freenove ESP32-S3 Display 3.5in (FNK0104N), native USB"),
+    # Marauder V8 (justcallmekoko): ESP32-C5, 8 MB flash, ILI9341 + resistive
+    # touch, GPS, MAX17048 gauge, behind a CP210x. Its Marauder v1.12.1 image
+    # was read off first (sim/out/marauder_v8/marauder_v8_factory.bin).
+    # Bring-up began 2026-10-12.
+    "3c:dc:75:81:0a:7c": ("marauder-v8", "Marauder V8, ESP32-C5 behind a CP210x"),
+    # LilyGo T-Deck Plus: ESP32-S3FN16R8, 16 MB flash, 8 MB PSRAM, 2.8in ST7789,
+    # GT911 touch, keyboard, trackball, SX1262, GPS. Native USB with its MAC as
+    # the serial number. Its factory image was read off first
+    # (sim/out/tdeck_plus/tdeck_plus_factory.bin). Bring-up began 2026-10-12.
+    "30:ed:a0:a5:c3:f8": ("tdeck-plus",  "LilyGo T-Deck Plus, ESP32-S3, native USB"),
     # 88:57:21:2e:e6:e0 runs SquachEmit, not this firmware. It is the only
     # CAPACITIVE 2.8in; to test capacitive touch, list it here as cyd-fast
     # for the test and comment it out again after (done 2026-09-21).
@@ -133,7 +144,7 @@ def main():
                             "0x8000", os.path.join(build, "partitions.bin"),
                             "0xe000", boot_app0,
                             "0x10000", os.path.join(build, "firmware.bin")], cwd=ROOT)
-    elif env == "nm-cyd-c5":
+    elif env in ("nm-cyd-c5", "marauder-v8"):
         # The C5's toolchain (pioarduino) installs its own core into whatever
         # penv runs it, and run from the shared one it broke `pio` for every
         # board (2026-10-02). It lives in a core dir of its own, and its
@@ -145,6 +156,10 @@ def main():
             sys.exit("the C5 builds from %s; make that venv first (pip install pioarduino)" % pio)
         e = {k: v for k, v in os.environ.items() if k != "MSYSTEM"}
         e["PLATFORMIO_CORE_DIR"] = core
+        # esptool 5 draws its progress with characters a Windows console's
+        # code page cannot encode; the print raised and the upload sat hung
+        # with the port open (the Marauder V8, 2026-10-12).
+        e["PYTHONIOENCODING"] = "utf-8"
         r = subprocess.run([pio, "run", "-e", build_env, "-t", "upload", "--upload-port", port], cwd=ROOT, env=e)
     else:
         r = subprocess.run([PIO, "run", "-e", build_env, "-t", "upload", "--upload-port", port], cwd=ROOT)

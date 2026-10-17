@@ -4,6 +4,15 @@
 #include <TFT_eSPI.h>
 #include "detection.h"
 
+// The speaker's two rows: on the boards with one, and in the emulator, where
+// they are listed only with SQUACHSIM_SPEAKER set (for the release clip) so
+// the web emulator never offers a sound it cannot make.
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || defined(TDECK_PLUS) || !defined(ESP32)
+#define SQW_SOUND_ROWS 1
+#else
+#define SQW_SOUND_ROWS 0
+#endif
+
 enum class SettingsRow : uint8_t {
     THEME = 0,
     BACKGROUND,
@@ -32,8 +41,8 @@ enum class SettingsRow : uint8_t {
     RESET_STATS,
     SQUACHY_NAME,   // opens the payphone; SquachMesh builds only
     SQUACHMESH,     // announce ourselves to other SquachWatches
-    APPEARANCE,     // opens the APPEARANCE page: the display rows, and the hat
-    TOP_HAT,        // on the APPEARANCE page, once he is a Legend
+    APPEARANCE,     // opens the APPEARANCE page: the display rows, and the aura
+    AURA,           // on the APPEARANCE page, once he is a Legend
     SYSTEM,         // opens the SYSTEM page: calibrate, colours, diagnostics, reset
     WATCH_TARGET,   // "WATCHING: <name>", only while a watch is set. Taps clear it.
     HUNT_TARGET,    // "HUNTING: <name>", same deal
@@ -60,18 +69,37 @@ enum class SettingsRow : uint8_t {
     WATCH_IDLE_CPU,  // the T-Watch only: SLEEP CPU, the clock while the screen is asleep
     WATCH_BUZZ,      // the T-Watch only: buzz on an alert, OFF / HIGH / MED / LOW
     WATCH_SETTINGS,  // the T-Watch only: the row on the main list that opens the WATCH SETTINGS page
-    WATCH_RADIO_RESET, // the T-Watch only: power cycle the watch to wake the radios, under WATCH
-    WATCH_STEADY,    // the T-Watch only: STEADY POWER, DC1 held in PWM, under WATCH
     WATCH_TEMP,      // the T-Watch only: the chip's temperature, a reading, under WATCH
-    WATCH_XTAL,      // the T-Watch only: CLOCK CHECK, the ESP32's crystal against the clock chip's
+    WATCH_WARDRIVE,  // the T-Watch only: WARDRIVE, every network and device with where, for WiGLE
+    WATCH_QUIET_TAGS, // the T-Watch only: TAGS + RINGS, logged without waking the watch
+    WATCH_LORA,      // the T-Watch only: LORA, which networks the LoRa radio listens to
+    WATCH_LORA_CHATS, // the T-Watch only: LORA CHATS, what it decoded, one chat per network
+    LORA_TX,         // the T-Deck only: LORA TX, off or the power the chats' compose line sends at
 #if defined(CROWPANEL7)
     BUZZER,          // the CrowPanel 7 only, the one board with a buzzer: OFF, or NEW ONLY
 #endif
-    BOARD_BATTERY,   // Freenove S3 / CYD40: cell voltage and estimated %, on SYSTEM
-#if defined(CYD40)
-    SOUND_ALERTS,    // CYD40 speaker: audible detection chirps
-    SOUND_VOLUME,    // CYD40 speaker volume
+#if SQW_SOUND_ROWS
+    SOUND,           // the Freenove S3 boards, which have a speaker: OFF, ALERTS or ALL
+    SOUND_VOLUME,    // and how loud: 0-100% on its - and + buttons
 #endif
+#if SQW_WIFI_5G
+    WIFI_BANDS,      // a chip with 5 GHz only (the NM-CYD-C5): 2.4+5, or 2.4
+#endif
+    BOARD_BATTERY,   // the Freenove S3s, the Marauder V8 and the T-Deck Plus: the cell, on the SYSTEM page
+    CHARGE_MODE,     // the CYD boards: radios and screen off so a battery charges faster
+    LAST_RUN,        // the CYD boards: how long the previous boot ran, on the SYSTEM page
+    PRIVACY,         // PRIVACY MODE: addresses and names masked on screen, on the SYSTEM page
+    EXT_SCREEN,      // the Cardputer ADV only: a second panel on the EXT header
+    DET_STYLE,       // on the APPEARANCE page: XP or CLASSIC detection counters
+    CLOCK_FORMAT,    // on the DESK MODE page: 12-hour or 24-hour time
+    FONTS,           // on the APPEARANCE page: opens the FONTS page
+    FONT_MENUS,      // on the FONTS page: list and settings rows
+    FONT_TEXT,       // on the FONTS page: running text, headings, info panels
+    FONT_BUTTONS,    // on the FONTS page: button labels
+    FONT_BUBBLES,    // on the FONTS page: his bubble and the pets' balloons
+    FONT_XP,         // on the FONTS page: the XP counter tiles, 1x or 2x
+    FONT_PETS,       // on the FONTS page: the pets' balloons
+    FONT_PREVIEW,    // on the FONTS page: a sample of the last kind moved, at its size
     BACK,
     COUNT,
     NONE = 255
@@ -88,18 +116,15 @@ void uiSettingsScroll(int delta);     // positive = scroll down
 // Each page keeps its OWN scroll position, so leaving a page and coming back
 // puts you where you were instead of at the top -- the list is long enough
 // that losing your place was the most-felt annoyance on this screen.
-enum class SettingsPage : uint8_t { MAIN = 0, APPEARANCE = 1, SYSTEM = 2, DESK = 3, WATCH = 4 };
+enum class SettingsPage : uint8_t { MAIN = 0, APPEARANCE = 1, SYSTEM = 2, DESK = 3, WATCH = 4, FONTS = 5 };
+// Where UP goes from a page: FONTS sits inside APPEARANCE, the rest inside MAIN.
+SettingsPage uiSettingsParentPage();
 void         uiSettingsOpenPage(SettingsPage p);
 SettingsPage uiSettingsCurrentPage();
 
 // Kept so existing callers read the same. APPEARANCE only.
 void uiSettingsOpenAppearance(bool open);
 
-// A tap on a group heading folds that group away, turning a list that runs
-// four screens deep into a short menu. Returns true if (x,y) hit a heading and
-// the fold was toggled, in which case the tap is spent -- call this BEFORE
-// uiSettingsHitTest().
-bool uiSettingsTapHeader(TFT_eSPI& t, int x, int y, int screenW, int screenH);
 
 // True when a mode has switched this row off (boring mode, today). A tap on
 // one says why rather than silently doing nothing.
@@ -119,6 +144,19 @@ bool uiSettingsTapPinnedOk(int x, int y, int screenW, int screenH);
 // just the screen dimensions) since row height now depends on actual
 // font metrics -- same reasoning as ui_rawscan.cpp's uiRawScanRowAt().
 SettingsRow uiSettingsHitTest(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+// The stepper rows (BRIGHT, VOLUME) carry a real - and + button each. For a
+// tap that uiSettingsHitTest put on one of those rows: -1 on the minus, +1
+// on the plus, 0 anywhere else on the row -- which does nothing, so a thumb
+// resting on the label never nudges the value.
+int uiSettingsStepHit(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+bool uiSettingsIsStepper(SettingsRow r);
+// The FONTS page's sliders: a tap on a FONT_ row's - or + steps it, a tap on
+// its track jumps to the nearest stop. Call for a tap uiSettingsHitTest put
+// on one of those rows.
+void uiSettingsFontTap(TFT_eSPI& t, int x, int y, int screenW, int screenH);
+// Which kind the preview box shows (Settings::FontKind as a number); a slider
+// tap sets it. For the emulator's shots of each.
+void uiSettingsSetFontPreview(uint8_t kind);
 
 // ---- confirmation panel ---------------------------------------------------
 // Two rows here cannot be taken back by tapping them again: CALIBRATE TOUCH
