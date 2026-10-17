@@ -2,7 +2,7 @@ name: Hosyond CYD 4.0 Firmware
 
 on:
   push:
-    branches: [master, "feature/hosyond-cyd40"]
+    branches: [master, "feature/hosyond-cyd40", "sync-upstream-v1.39.0"]
   pull_request:
   workflow_dispatch:
 
