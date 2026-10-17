@@ -1,0 +1,82 @@
+name: Stage latest upstream safely
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/stage-upstream-sync.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Stage merge without discarding fork-specific changes
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add squachwatch-upstream https://github.com/skizzophrenic/SquachWatch-CYD.git
+          git fetch --no-tags squachwatch-upstream master
+          BASE="$(git rev-parse HEAD)"
+          UPSTREAM="$(git rev-parse FETCH_HEAD)"
+          echo "Fork base: $BASE"
+          echo "Upstream: $UPSTREAM"
+          git switch -c sync-upstream-v1.39.0
+          # A conventional merge attempts all upstream changes while
+          # favoring the fork ONLY at directly overlapping code hunks.
+          git merge --no-commit --no-ff -X ours FETCH_HEAD || true
+          test -f .git/MERGE_HEAD
+          conflicts="$(git diff --name-only --diff-filter=U)"
+          if test -n "$conflicts"; then
+            printf '%s\n' "$conflicts" | while IFS= read -r path; do
+              echo "PRESERVE FORK-SIDE CONFLICT: $path"
+              if git checkout --ours -- "$path"; then
+                git add -- "$path"
+              else
+                git rm -f --ignore-unmatch -- "$path"
+              fi
+            done
+          fi
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git add -A
+          git commit -m "Merge upstream SquachWatch v1.39.0; preserve fork-specific conflicts"
+          git merge-base --is-ancestor "$BASE" HEAD
+          git merge-base --is-ancestor "$UPSTREAM" HEAD
+          git push origin HEAD:refs/heads/sync-upstream-v1.39.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Validate preserved Hosyond board files
+        run: |
+          set -e
+          test -f include/cyd40_user_setup.h
+          test -f src/board_audio.cpp
+          test -f src/ui_clear.cpp
+          grep -q 'boardBatteryChargingEstimated' src/main.cpp
+          grep -q 'boardBatteryChargingEstimated' src/ui_clear.cpp
+          grep -q '^\[env:cyd40\]' platformio.ini
+          grep -q '^\[env:cyd40-fast\]' platformio.ini
+      - name: Build Hosyond CYD40 (standard)
+        run: pio run -e cyd40
+      - name: Build Hosyond CYD40 (fast)
+        run: pio run -e cyd40-fast
+      - name: Upload sync-tested firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: squachwatch-v1.39-upstream-sync-hosyond-test
+          path: |
+            .pio/build/cyd40/firmware.bin
+            .pio/build/cyd40-fast/firmware.bin
+          if-no-files-found: error
