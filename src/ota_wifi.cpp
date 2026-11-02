@@ -35,7 +35,9 @@ const char* NVS_NS = "otawifi";
 const uint32_t JOIN_TIMEOUT_MS  = 20000;
 const uint32_t STALL_TIMEOUT_MS = 15000;
 #if defined(CYD40)
-const uint32_t TASK_STACK       = 16384; // TLS handshake needs more stack than upstream HTTP
+const uint32_t TASK_STACK       = 12288; // reserve 12KB for TLS + OTA, without starving WiFi's heap
+// The old 16KB worker allocation failed on constrained Hosyond boards
+// after WiFi initialization. Log the actual low-water mark at task exit.
 #else
 const uint32_t TASK_STACK       = 8192;    // measured 3.2 KB used over a whole plain-HTTP update (was 12 KB, sized for TLS)
 #endif
@@ -62,6 +64,12 @@ uint8_t s_n = 0, s_use = 0;
 char    s_latest[24] = "";
 uint8_t s_sig[80];
 uint8_t s_sigLen = 0;
+#if defined(CYD40)
+// Reserve the OTA transfer buffer at boot, BEFORE WiFi and mbedTLS fragment
+// internal RAM. A late malloc(4096) after HTTPS and esp_ota_begin could fail
+// even when total free heap was sufficient. Keep this at 1KB for Hosyond.
+static uint8_t s_streamBuf[1024];
+#endif
 
 TaskHandle_t s_task       = nullptr;
 // What the last fetch from the site ran into, in a few words: shown after the
@@ -696,13 +704,22 @@ void download() {
     s_size = (uint32_t)size;
         Serial.printf("[ota] heap after ota begin: %lu free, largest %lu\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 
-    uint8_t* buf = (uint8_t*)malloc(4096);
+#if defined(CYD40)
+    // No heap allocation after TLS is connected. This preallocated buffer
+    // was reserved before the WiFi driver and flash writer used the heap.
+    uint8_t* const buf = s_streamBuf;
+    const size_t streamChunk = sizeof s_streamBuf;
+    Serial.printf("[ota] streaming via %u-byte reserved buffer\n", (unsigned)streamChunk);
+#else
+    uint8_t* const buf = (uint8_t*)malloc(4096);
+    const size_t streamChunk = 4096;
     if (!buf) {
         Serial.printf("[ota] no room for the download buffer: heap %lu largest %lu\n",
                       (unsigned long)ESP.getFreeHeap(),
                       (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
         c.stop(); OtaCore::abort(); fail(Fail::LOW_MEMORY); return;
     }
+#endif
     WiFiClient* s = &c;
     uint32_t last = millis();
     // Every 256 KB, and at the end: how far, how fast, and how much room is
@@ -720,7 +737,7 @@ void download() {
             continue;
         }
         size_t want = (size_t)a;
-        if (want > 4096) want = 4096;
+        if (want > streamChunk) want = streamChunk;
         if (want > s_size - s_rx) want = s_size - s_rx;
         const int r = s->read(buf, want);
         if (r <= 0) continue;
@@ -747,7 +764,9 @@ void download() {
                       (unsigned long)ESP.getFreeHeap(),
                       (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     }
+#if !defined(CYD40)
     free(buf);
+#endif
     c.stop();
 
     if (s_cancel || s_state == State::FAILED) { OtaCore::abort(); return; }
@@ -829,6 +848,20 @@ bool begin() {
     // joined -- which is also how somebody who has moved picks a new one.
     // With networks saved, the scan comes first and the best of them is
     // joined from tick(); the list only appears when none is in range.
+#if defined(CYD40)
+    // With one saved SSID, scanning first costs heap and fragments WiFi's
+    // allocations before the 12KB OTA worker even exists. Connect directly;
+    // a failed join still offers TRY AGAIN and a full selectable scan.
+    if (s_n == 1) {
+        s_autoJoin = false;
+        s_netN = 0;
+        WiFi.scanDelete();
+        s_state = State::PICK;
+        Serial.println("[ota] CYD40: one saved network, skipping pre-join scan to preserve OTA heap");
+        connectSavedAt(0);
+        return true;
+    }
+#endif
     s_autoJoin = s_n > 0;
     startScan();
     Serial.println("[ota] wifi update mode: scanning");
@@ -987,12 +1020,18 @@ void connect(const char* ssid, const char* pass, bool save) {
     s_fail    = Fail::NONE;
     s_cancel  = s_install = s_downloadStarted = false;
     s_state   = State::CONNECTING;
+    Serial.printf("[ota] creating update worker: stack %u, free %lu, largest %lu\n",
+                  (unsigned)TASK_STACK, (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     if (xTaskCreatePinnedToCore(run, "otawifi", TASK_STACK, nullptr, 1, &s_task, 1) != pdPASS) {
         s_task = nullptr;
         memset(s_pass, 0, sizeof s_pass);
         Serial.printf("[ota] no room for the update task: %u wanted, heap %lu largest %lu\n", (unsigned)TASK_STACK,
                       (unsigned long)ESP.getFreeHeap(),
                       (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#if defined(CYD40)
+        snprintf(s_why, sizeof s_why, "worker stack (%u KB)", (unsigned)(TASK_STACK / 1024));
+#endif
         fail(Fail::LOW_MEMORY);
     }
 }
