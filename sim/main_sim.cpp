@@ -78,6 +78,9 @@
 #include "png_writer.h"
 #include "touch_cal.h"
 #include "ui_lorahome.h"
+#include "ui_lorasettings.h"
+#include "ui_lorachat.h"
+#include "lora_channels.h"
 #include "lora_sim.h"           // the made-up band the LORA page reads
 
 // A few plausible log entries so screens have something real to draw --
@@ -288,6 +291,15 @@ static void gpsFeed(uint32_t nowMs) {
     for (const char* line : BURST) Gnss::sentence(line, nowMs);
 }
 
+// SQUACHSIM_LORACH: the channel chip's pick for network `net` (0 Meshtastic,
+// 1 MeshCore), set the way a tap leaves it -- by name in the settings store --
+// and both picks cleared first, because the NVS shim may remember a run.
+static void simLoraPick(uint8_t net) {
+    Settings::setLoraTxChan(false, "");
+    Settings::setLoraTxChan(true, "");
+    if (const char* ch = getenv("SQUACHSIM_LORACH")) Settings::setLoraTxChan(net != 0, ch);
+}
+
 static void usage() {
     fprintf(stderr,
         "usage: squachsim <screen> [out.png] [options]\n"
@@ -297,6 +309,13 @@ static void usage() {
         "                    SQUACHSIM_LORAQUIET=s: no packets for s seconds before the capture\n"
         "                    SQUACHSIM_LORATYPE=TEXT: typed from the capture, then Enter\n"
         "                    SQUACHSIM_LORATX=1: LORA TX on; SQUACHSIM_LORANEW=n: the NEW badge\n"
+        "                    SQUACHSIM_LORACH=name: the channel chip picks that channel of the\n"
+        "                    open tab's network (Yowie, #sasquatch, RidgeCrew); unset = default\n"
+        "  lorachat          the T-Deck's LORA CHATS with its compose line (--size 320x240);\n"
+        "                    --tab, SQUACHSIM_LORATYPE, SQUACHSIM_LORATX and SQUACHSIM_LORACH as lora\n"
+        "  lorasettings      the T-Deck's LORA SETTINGS page (--size 320x240): --scroll n moves it n rows,\n"
+        "                    --tap f:x:y taps it, SQUACHSIM_LORATYPE types into an open edit line\n"
+        "                    ('|' is Enter), SQUACHSIM_LORAREST=1 says the radios are resting\n"
         "  dex               --pose N opens entry N\'s card (1-17); 0 is the index\n"
         "  touchcal          the touch calibration, played by a scripted finger:\n"
         "                    --frames skips that many 66 ms frames, --sequence films\n"
@@ -311,6 +330,8 @@ static void usage() {
         "  --theme N         palette index\n"
         "  --alert N         DetectionType the ALERT screen fires on\n"
         "  --first / --night / --lastfree   the ALERT card's banners\n"
+        "                    SQUACHSIM_SNOOZE=\"30 MIN\": SNOOZE mid-pick on that step\n"
+        "                    SQUACHSIM_TOAST=\"HEAD|sub\": a toast over CLEAR\n"
         "  --noseed          no detections at all -- CLEAR's idle state\n"
         "  --gps             a fresh GPS fix: CLEAR's GPS label, DIAGNOSTICS' GPS lines,\n"
         "                    the ALERT card's place\n"
@@ -720,13 +741,17 @@ int main(int argc, char** argv) {
 
     // The LORA page's compose line, typed: one key every two frames from the
     // capture (SQUACHSIM_LORATYPE), then Enter.
-    const char* loraType = screen == "lora" ? getenv("SQUACHSIM_LORATYPE") : nullptr;
-    const uint32_t loraTypeAt = now + (uint32_t)frames * STEP_MS;
+    const char* loraType = (screen == "lora" || screen == "lorasettings" || screen == "lorachat") ? getenv("SQUACHSIM_LORATYPE") : nullptr;
+    const bool loraRest = getenv("SQUACHSIM_LORAREST") != nullptr;
+    // LORA SETTINGS types from frame 30 of the warm-up, after the --tap that
+    // opens an edit line, so the capture shows the line typed.
+    // LORA CHATS from frame 10, so the capture shows forty keys of it typed.
+    const uint32_t loraTypeAt = now + (uint32_t)(screen == "lorasettings" ? 30 : screen == "lorachat" ? 10 : frames) * STEP_MS;
     size_t loraTyped = 0;
     auto tick = [&](uint32_t t) {
         SimClock::nowMs = t;
         if      (screen == "clear")    { Theme::setRedGlyph(!Squachy::th3Unlocked()); uiClearEmoteTick(t); uiClearTick(frame, t, engine, true, false);
-                                         if (headsUp || getenv("SQUACHSIM_POWEROFF")) Theme::drawToast(frame, t); }
+                                         if (headsUp || simToast || getenv("SQUACHSIM_POWEROFF")) Theme::drawToast(frame, t); }
         else if (screen == "log") {
             const bool info = (infoType >= 0);
             const DetectionType it = info ? (DetectionType)infoType : DetectionType::UNKNOWN;
@@ -735,7 +760,16 @@ int main(int argc, char** argv) {
                       info ? DetectionInfo::explainLive(it, engine) : "",
                       false, false, false);   // no confirm panel in the sim: nothing watched, nothing hunted
         }
-        else if (screen == "alert")    uiAlertTick(frame, t, engine, false, nullptr, "");
+        else if (screen == "alert")    {
+            // SQUACHSIM_SNOOZE=label: SNOOZE mid-pick, showing that step, its
+            // bar running out over 3 s from the capture's start.
+            if (const char* snz = getenv("SQUACHSIM_SNOOZE")) {
+                const uint32_t from = now + (uint32_t)frames * STEP_MS;
+                const uint32_t gone = t > from ? (t - from) / 3 : 0;
+                uiAlertSetSnoozePick(snz, (uint16_t)(gone >= 1000 ? 0 : 1000 - gone));
+            }
+            uiAlertTick(frame, t, engine, false, nullptr, "");
+        }
         else if (screen == "settings") uiSettingsTick(frame, t, engine);
         else if (screen == "detfilter") uiDetFilterTick(frame, t, engine);
         else if (screen == "power")    uiPowerTick(frame, t, engine);
@@ -848,6 +882,26 @@ int main(int argc, char** argv) {
                     uiLoraHomeKey(loraTyped < len ? loraType[loraTyped] : '\n', t);
             }
             uiLoraHomeTick(frame, t);
+        }
+        else if (screen == "lorachat") {
+            SimLora::step(t);
+            if (loraType && t >= loraTypeAt) {
+                const size_t want = (t - loraTypeAt) / (2 * STEP_MS) + 1, len = strlen(loraType);
+                for (; loraTyped < want && loraTyped < len; loraTyped++)
+                    uiLoraChatKey(loraType[loraTyped] == '|' ? '\n' : loraType[loraTyped], t);
+            }
+            uiLoraChatTick(frame, t);
+        }
+        else if (screen == "lorasettings") {
+            SimLora::step(t);
+            // Typed into whatever edit line a --tap opened, from the capture
+            // on; a '|' in the text is Enter.
+            if (loraType && t >= loraTypeAt) {
+                const size_t want = (t - loraTypeAt) / (2 * STEP_MS) + 1, len = strlen(loraType);
+                for (; loraTyped < want && loraTyped < len; loraTyped++)
+                    uiLoraSettingsKey(loraType[loraTyped] == '|' ? '\n' : loraType[loraTyped], t);
+            }
+            uiLoraSettingsTick(frame, t, loraRest);
         }
         else if (screen == "poses") {
             // Every arm movement he has, for the costume test in
@@ -1016,8 +1070,27 @@ int main(int argc, char** argv) {
         const bool tx = getenv("SQUACHSIM_LORATX") || getenv("SQUACHSIM_LORATYPE");
         for (int g = 0; g < 3 && (Settings::loraTxDbm() != 0) != tx; g++) Settings::cycleLoraTx();
         SimLora::begin(lc);
+        simLoraPick(lc.net);
         uiLoraHomeInit(frame);
         uiLoraHomeSetNet(lc.net);
+    }
+    else if (screen == "lorachat") {
+        SimLora::Config lc;
+        lc.captureAt = now + (uint32_t)frames * STEP_MS;
+        lc.net       = tabIdx ? 1 : 0;
+        const bool tx = getenv("SQUACHSIM_LORATX") || getenv("SQUACHSIM_LORATYPE");
+        for (int g = 0; g < 3 && (Settings::loraTxDbm() != 0) != tx; g++) Settings::cycleLoraTx();
+        SimLora::begin(lc);
+        simLoraPick(lc.net);
+        uiLoraChatSelect(lc.net);
+        uiLoraChatInit(frame);
+    }
+    else if (screen == "lorasettings") {
+        SimLora::Config lc;
+        lc.captureAt = now + (uint32_t)frames * STEP_MS;
+        SimLora::begin(lc);
+        simLoraPick(tabIdx ? 1 : 0);
+        uiLoraSettingsInit(frame, true);
     }
     else if (screen == "wifiadd")    uiWifiAddInit(frame);
     else if (screen == "dex") {
@@ -1213,6 +1286,7 @@ int main(int argc, char** argv) {
         else if (screen == "light")      uiLightScroll(1);
         else if (screen == "detfilter")  uiDetFilterScroll(1);
         else if (screen == "ignorelist") uiIgnoreListScroll(1);
+        else if (screen == "lorasettings") uiLoraSettingsScrollBy(26);
         else                             uiSettingsScroll(1);
     }
 
@@ -1224,6 +1298,7 @@ int main(int argc, char** argv) {
     // landed, then a pet (or, on his shades with the aura lit, a reading).
     // Anything else is the background's.
     auto tapAt = [&](int x, int y, uint32_t when) {
+        if (screen == "lorasettings") { uiLoraSettingsTap(x, y, when); return; }
         // The pet first, as on the board: a still tap is a grab and a let-go.
         if (Pet::clippyHit(x, y)) { Pet::clippyGrab(x, y, when); Pet::clippyRelease(when); }
         else if (Squachy::hitTest(x, y)) { Squachy::noteTapAt(x, y); Squachy::trigger(Squachy::Event::PETTED); }

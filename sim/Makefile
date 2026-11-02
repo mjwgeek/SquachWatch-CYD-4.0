@@ -83,6 +83,7 @@ UI_SRCS  := $(SRC)/theme.cpp \
             $(SRC)/ui_meshcompose.cpp \
             $(SRC)/board_audio.cpp \
             $(SRC)/settings.cpp \
+            $(SRC)/lora_myname.cpp \
             $(SRC)/signatures.cpp \
             $(SRC)/remote_id.cpp \
             $(SRC)/clock.cpp \
@@ -148,7 +149,10 @@ SIM_SRCS := $(SIM_DIR)/main_sim.cpp $(SIM_DIR)/detection_sim.cpp $(SRC)/touch_ca
 # what src/ui_lorahome.cpp is built under here. Not -DSQUACH_LORA: that also
 # switches on the network halves of lora_feed.cpp and lora_enrich.cpp. The
 # live and web builds never see it, so their main.cpp is the CYD's as before.
-SIM_SRCS += $(SRC)/ui_lorahome.cpp $(SIM_DIR)/lora_sim.cpp             $(SRC)/lora_profiles.cpp $(SRC)/lora_crypto.cpp
+# The chats screen (`lorachat`) and the compose lines' channel chip read the
+# decoders' real channel tables and Lora::Chan's pick, so those come too.
+SIM_SRCS += $(SRC)/ui_lorahome.cpp $(SRC)/ui_lorasettings.cpp $(SIM_DIR)/lora_sim.cpp             $(SRC)/lora_profiles.cpp $(SRC)/lora_crypto.cpp
+SIM_SRCS += $(SRC)/ui_lorachat.cpp $(SRC)/lora_meshtastic.cpp $(SRC)/lora_meshcore.cpp $(SRC)/lora_channels.cpp
 SIM_FLAGS := -DSQUACH_LORA_FAKE=1
 
 # The interactive target additionally compiles the firmware's real
