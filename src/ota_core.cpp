@@ -294,6 +294,8 @@ void boot() {
     }
 }
 
+bool confirmationPending() { return s_probation; }
+
 void tick(uint32_t now) {
     if (s_restart && now >= s_restartAt) {
         Serial.println("[ota] restarting");

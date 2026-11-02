@@ -3,6 +3,7 @@
 // and the DetectionEngine.
 
 #include <Arduino.h>
+#include "settings.h"  // boot-check recovery guard uses persisted settings before setup()
 #include "serial_flush.h"
 #include <SPI.h>
 #include <Wire.h>
@@ -117,6 +118,48 @@ static bool takeBootCheckSkip() {
     g_bootCheckSkip = 0;
     return esp_reset_reason() == ESP_RST_SW && v == CHKSKIP_MAGIC;
 }
+#if defined(CYD40)
+// Persist an in-progress startup check until the board has run the main loop
+// for 30 seconds. A watchdog/panic (or power loss) anywhere after HTTPS, even
+// after the check returned, will turn automatic checks OFF at the next boot.
+// This prevents a repeated 7-second startup loop from trapping the owner.
+// The marker lives in a separate NVS namespace; the updater and other boards
+// remain unchanged. Manual OTA never uses this marker.
+static bool s_cydBootCheckArmed = false;
+static bool s_cydBootCheckDisabled = false;
+static bool cydBootCheckRecover() {
+    Preferences p;
+    if (!p.begin("bootcheck", false)) {
+        Serial.println("[ota] boot check guard NVS unavailable; skipping automatic check");
+        return false;
+    }
+    const bool interrupted = p.getBool("pending", false);
+    if (interrupted) p.putBool("pending", false);
+    p.end();
+    if (interrupted) {
+        if (Settings::updateCheck()) Settings::toggleUpdateCheck();
+        s_cydBootCheckDisabled = true;
+        Serial.println("[ota] previous startup check did not reach 30 s stable boot; automatic checking switched OFF");
+    }
+    return !interrupted;
+}
+static bool cydBootCheckArm() {
+    Preferences p;
+    if (!p.begin("bootcheck", false)) return false;
+    const bool ok = p.putBool("pending", true) == 1;
+    p.end();
+    if (ok) s_cydBootCheckArmed = true;
+    else Serial.println("[ota] boot check guard could not persist marker; skipping");
+    return ok;
+}
+static void cydBootCheckDisarm() {
+    if (!s_cydBootCheckArmed) return;
+    Preferences p;
+    if (!p.begin("bootcheck", false)) return;
+    if (p.putBool("pending", false) == 1) s_cydBootCheckArmed = false;
+    p.end();
+}
+#endif
 #if defined(TWATCH_S3)
 // The watch's radio self-heal: how many restarts in a row it has made because
 // it heard nothing at all. Same RTC-memory shape as the flags above: a magic
@@ -3210,15 +3253,38 @@ void setup() {
     // locked, or with UPDATE CHECK off.
     bool bootCheckRan = false;
 #if defined(CYD40)
-    // The Hosyond has repeatedly reset while starting up after its HTTPS
-    // boot check (including after a USB reflash). A boot check is only an
-    // announcement, never an installer: avoid TLS/WiFi heap fragmentation
-    // before the large half-height sprite and radio initialization. Keep
-    // manual Update Over Wi-Fi available after the board has booted.
-    // Clear any stale one-boot retry flag left by older firmware.
-    (void)takeBootCheckSkip();
-    (void)bootCheckRan;
-    Serial.println("[ota] CYD40: automatic boot update check paused; use UPDATE OVER WIFI manually");
+    // Never run automatically unless the owner explicitly opts in on this
+    // release; the one-time settings migration defaults existing boards OFF.
+    // A previously interrupted boot-time check disables itself on this boot.
+    // A fresh OTA image must confirm rollback probation before optional TLS.
+    const bool recovered = cydBootCheckRecover();
+    const bool skipOnce = takeBootCheckSkip();
+    if (skipOnce)
+        Serial.println("[ota] CYD40: skipping boot check after previous framebuffer failure");
+    if (OtaCore::confirmationPending())
+        Serial.println("[ota] CYD40: new OTA image on probation; deferring automatic check");
+    if (recovered && !skipOnce && !OtaCore::confirmationPending() &&
+        Settings::updateCheck() && !Security::locked() &&
+        OtaCore::available() && OtaWifi::hasSaved() && cydBootCheckArm()) {
+        bootCheckRan = true;
+        // Do not allocate the large display sprite until after HTTPS has
+        // finished and released its connection/driver resources.
+        ledcWrite(BL_CH_ORIG, 24);
+        ledcWrite(BL_CH_CAP, 24);
+        ledcWrite(BL_CH_AWOK, 24);
+        tft.fillScreen(Theme::BG);
+        tft.setTextSize(1);
+        tft.setTextWrap(false);
+        tft.setTextColor(Theme::CYAN, Theme::BG);
+        const char* m = "CHECKING FOR UPDATES...";
+        tft.setCursor((tft.width() - tft.textWidth(m)) / 2, tft.height() / 2 - 4);
+        tft.print(m);
+        OtaWifi::bootCheck(6000);
+        tft.fillScreen(Theme::BG);
+        // Do NOT clear the NVS guard here: the old crash occurred after
+        // this function, while starting touch/radios/display. The main loop
+        // disarms only after 30 seconds of actual stable running.
+    }
 #else
     if (takeBootCheckSkip()) {
         Serial.println("[ota] boot check skipped: the frame buffer failed after the last one");
@@ -3273,6 +3339,16 @@ void setup() {
         Serial.printf("[boot] CYD35/CYD40 half-height sprite unavailable: heap %lu, largest %lu; using panel directly\n",
                       (unsigned long)ESP.getFreeHeap(),
                       (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#if defined(CYD40)
+        // Not a healthy boot-check result: leave the working direct-render
+        // fallback, but stop asking HTTPS to run automatically next time.
+        if (bootCheckRan && Settings::updateCheck()) {
+            Settings::toggleUpdateCheck();
+            s_cydBootCheckDisabled = true;
+            cydBootCheckDisarm();
+            Serial.println("[ota] framebuffer low after boot check; automatic checking switched OFF");
+        }
+#endif
     }
     frame.setTextSize(1);
 #else
@@ -3929,6 +4005,17 @@ void loop() {
     OtaCore::tick(now);
     OtaBle::tick(now);
     OtaWifi::tick(now);
+#if defined(CYD40)
+    if (s_cydBootCheckArmed && now >= 30000UL) {
+        cydBootCheckDisarm();
+        if (!s_cydBootCheckArmed)
+            Serial.println("[ota] CYD40: startup check and 30-second stability verified");
+    }
+    if (s_cydBootCheckDisabled && state == AppState::CLEAR) {
+        s_cydBootCheckDisabled = false;
+        Theme::showToast("BOOT CHECK OFF", "Interrupted startup; use manual update", Theme::AMBER, 4500);
+    }
+#endif
 #if defined(CYD40)
     // The secure OTA check can run with the half-height sprite freed. Put it
     // back only after the worker is completely gone and the user has left
@@ -5601,10 +5688,11 @@ void loop() {
                         case SettingsRow::BACKGROUND: Settings::cycleBackground(); break;
                         case SettingsRow::BACKGROUND_LOCK: Settings::toggleBackgroundLocked(); break;
                         case SettingsRow::UPDATE_CHECK:
-#if defined(CYD40)
-                            Theme::showToast("BOOT CHECK PAUSED", "Use UPDATE OVER WIFI", Theme::AMBER);
-#else
                             Settings::toggleUpdateCheck();
+#if defined(CYD40)
+                            Theme::showToast(Settings::updateCheck() ? "UPDATE CHECK ON" : "UPDATE CHECK OFF",
+                                             Settings::updateCheck() ? "Checks on next boot" : "Manual updates still work",
+                                             Theme::CYAN);
 #endif
                             break;
                         case SettingsRow::TIME_ZONE:       Settings::cycleTimeZone();         break;

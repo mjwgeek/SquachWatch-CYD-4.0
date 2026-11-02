@@ -72,6 +72,10 @@ bool available();
 // aftermath of one that was rolled back.
 void boot();
 
+// Freshly installed OTA images should confirm a stable boot before attempting
+// any optional network work. True only while bootloader rollback is pending.
+bool confirmationPending();
+
 // Every loop: confirms a probationary image once it has run for CONFIRM_MS,
 // and performs a restart somebody asked for with restartSoon().
 void tick(uint32_t now);

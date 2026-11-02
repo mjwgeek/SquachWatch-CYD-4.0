@@ -731,7 +731,19 @@ void load() {
     // anyone who wants it.
     s_remoteUpdate = s_prefs.getBool("rmtUpd", true);
     s_phraseShown  = s_prefs.getBool("phrShow", true);
+#if defined(CYD40)
+    // One-time safety migration after the 2.0.12 boot-loop recovery. Previous
+    // releases left updChk=true even while the menu displayed PAUSED. Never
+    // silently reactivate an untested boot-time HTTPS check on upgrade.
+    // The owner may explicitly opt back in from SYSTEM after this migration.
+    if (!s_prefs.getBool("updSafe1", false)) {
+        s_prefs.putBool("updChk", false);
+        s_prefs.putBool("updSafe1", true);
+    }
+    s_updateCheck  = s_prefs.getBool("updChk", false);
+#else
     s_updateCheck  = s_prefs.getBool("updChk", true);
+#endif
     s_timeZone     = s_prefs.getUChar("tz", 10);
     s_tzChosen     = s_prefs.getBool("tzSet", false);
     if (s_timeZone >= Clock::zoneCount()) s_timeZone = 10;
