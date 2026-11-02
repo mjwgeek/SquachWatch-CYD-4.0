@@ -629,7 +629,7 @@ int main(int argc, char** argv) {
     // SQUACHSIM_FONTS=mtbs: the FONTS page's four sliders, one digit each for
     // MENUS, TEXT, BUTTONS, BUBBLES -- 0..4 for -2..+2, 2 as built.
     // SQUACHSIM_FONTPREVIEW=k: which kind the page's preview box shows.
-    if (const char* fp = getenv("SQUACHSIM_FONTPREVIEW")) uiSettingsSetFontPreview((uint8_t)atoi(fp));
+    // This Hosyond fork does not have the upstream uiSettingsSetFontPreview implementation.
     // SQUACHSIM_FONTFACES=mtbsx: a face per kind, 0 as built, 1 PIXEL, 2 SMOOTH.
     if (const char* ff = getenv("SQUACHSIM_FONTFACES"))
         for (int i = 0; i < (int)Settings::FontKind::COUNT && ff[i]; i++)
@@ -671,10 +671,10 @@ int main(int argc, char** argv) {
     if (const char* cc = getenv("SQUACHSIM_CLIPCATCH")) Pet::noteCatch((uint8_t)atoi(cc));
     // SQUACHSIM_YETI=0 or 1: the yeti pet (--pet 2) comes straight on and
     // dances the disco (0) or the floss (1).
-    if (const char* yd = getenv("SQUACHSIM_YETI")) Pet::yetiDance((int8_t)atoi(yd));
+    // The optional upstream Yeti dance console hook is absent in this fork.
     // SQUACHSIM_MEATY=0..3: MEATY (--pet 6) does the igloo, the hot dog,
     // Shake it, or splits into three.
-    if (const char* mw = getenv("SQUACHSIM_MEATY")) Pet::meatyAct((int8_t)atoi(mw));
+    // The optional upstream Meaty animation console hook is absent in this fork.
     // SQUACHSIM_JAIL=1: arrested as the screen opens, sirens and all; =2 is
     // already serving, the ball in place.
     if (const char* jl = getenv("SQUACHSIM_JAIL")) {
