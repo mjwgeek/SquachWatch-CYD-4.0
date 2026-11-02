@@ -3209,6 +3209,17 @@ void setup() {
     // Tells, never installs. Skipped with no saved network, with the board
     // locked, or with UPDATE CHECK off.
     bool bootCheckRan = false;
+#if defined(CYD40)
+    // The Hosyond has repeatedly reset while starting up after its HTTPS
+    // boot check (including after a USB reflash). A boot check is only an
+    // announcement, never an installer: avoid TLS/WiFi heap fragmentation
+    // before the large half-height sprite and radio initialization. Keep
+    // manual Update Over Wi-Fi available after the board has booted.
+    // Clear any stale one-boot retry flag left by older firmware.
+    (void)takeBootCheckSkip();
+    (void)bootCheckRan;
+    Serial.println("[ota] CYD40: automatic boot update check paused; use UPDATE OVER WIFI manually");
+#else
     if (takeBootCheckSkip()) {
         Serial.println("[ota] boot check skipped: the frame buffer failed after the last one");
     } else if (Settings::updateCheck() && !Security::locked() && OtaCore::available() && OtaWifi::hasSaved()) {
@@ -3234,7 +3245,7 @@ void setup() {
         OtaWifi::bootCheck(9000);
         tft.fillScreen(Theme::BG);
     }
-
+#endif
 
 #if defined(CYD35)
     // No FULL-screen double buffer on this board — confirmed on real
@@ -3253,8 +3264,15 @@ void setup() {
     // animation speed.
     canvas->setTextSize(1);
     frame.setColorDepth(8);
-    if (!frame.createSprite(tft.width(), tft.height() / 2)) {
-        Serial.println("ERROR: cyd35 half-height frame buffer allocation failed");
+    // On CYD40 this is roughly 77KB. A failed allocation must not leave
+    // frameBufferOk=true: drawTwoBand() would then render into an absent
+    // sprite and could crash/reboot after the touch-calibration prompt.
+    frameBufferOk = frame.createSprite(tft.width(), tft.height() / 2) != nullptr;
+    if (!frameBufferOk) {
+        canvas = &tft;  // safe unbuffered fallback, not a restart
+        Serial.printf("[boot] CYD35/CYD40 half-height sprite unavailable: heap %lu, largest %lu; using panel directly\n",
+                      (unsigned long)ESP.getFreeHeap(),
+                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     }
     frame.setTextSize(1);
 #else
@@ -5582,7 +5600,13 @@ void loop() {
                         case SettingsRow::THEME:      Settings::cyclePalette(); break;
                         case SettingsRow::BACKGROUND: Settings::cycleBackground(); break;
                         case SettingsRow::BACKGROUND_LOCK: Settings::toggleBackgroundLocked(); break;
-                        case SettingsRow::UPDATE_CHECK:    Settings::toggleUpdateCheck();     break;
+                        case SettingsRow::UPDATE_CHECK:
+#if defined(CYD40)
+                            Theme::showToast("BOOT CHECK PAUSED", "Use UPDATE OVER WIFI", Theme::AMBER);
+#else
+                            Settings::toggleUpdateCheck();
+#endif
+                            break;
                         case SettingsRow::TIME_ZONE:       Settings::cycleTimeZone();         break;
                         case SettingsRow::INVERT:
                             Settings::toggleInvert();
