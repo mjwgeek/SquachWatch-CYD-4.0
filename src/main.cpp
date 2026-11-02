@@ -3,6 +3,7 @@
 // and the DetectionEngine.
 
 #include <Arduino.h>
+#include "settings.h"  // boot-check recovery guard uses persisted settings before setup()
 #include "serial_flush.h"
 #include <SPI.h>
 #include <Wire.h>
