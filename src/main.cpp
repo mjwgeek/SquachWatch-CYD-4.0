@@ -1817,6 +1817,13 @@ static void lendFrameToDownload() {
 }
 static void restoreFrameBuffer() {
     if (!s_frameLent) return;
+#if defined(CYD40)
+    // BACK and CANCEL can enter another screen before the HTTPS worker
+    // has exited. Do not reallocate the ~77KB half-sprite while the
+    // worker still owns TLS buffers and its task stack. loop() restores
+    // the sprite after the task has exited and OTA has reached OFF.
+    if (OtaWifi::taskActive()) return;
+#endif
     s_frameLent = false;
 #if !defined(CYD35) || defined(CYD40)
     if (frameBufferOk) return;
