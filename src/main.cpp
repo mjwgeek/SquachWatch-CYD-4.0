@@ -751,7 +751,11 @@ static CalSource s_calSource = CalSource::BUILT_IN;
 // Fit. The 3.5" kept one per rotation, because the blob bakes in the
 // rotation it was taken at; any one of them is enough for a Fit, which
 // does not.
-#if defined(CYD35)
+#if defined(CYD40)
+// Hosyond 4.0 used its own TFT_eSPI legacy calibration store before
+// upstream synchronization. Do not import the 3.5" panel's raw mapping.
+static const char* TFT_ESPI_TOUCH_NS = "cyd40touch";
+#elif defined(CYD35)
 static const char* TFT_ESPI_TOUCH_NS = "cyd35touch";
 #else
 static const char* TFT_ESPI_TOUCH_NS = "awoktouch";
@@ -814,7 +818,38 @@ static bool readTouchRaw(int16_t& a, int16_t& b);
 static TouchPoint pollTouch() {
     TouchPoint tp = { false, 0, 0 };
     int16_t a, b;
+#if defined(CYD40)
+    // Hosyond XPT2046 touch hardware can report an isolated hit or drop
+    // a single read while a finger is held. Confirm a deliberate press
+    // across two samples and require two misses before reporting release.
+    // Other boards retain the upstream unmodified touch timing.
+    static bool s_confirmed = false;
+    static uint8_t s_downSamples = 0, s_upSamples = 0;
+    static uint32_t s_firstDown = 0, s_firstUp = 0;
+    static TouchPoint s_lastPoint = { false, 0, 0 };
+    const uint32_t sampleAt = millis();
+    if (!readTouchRaw(a, b)) {
+        s_downSamples = 0;
+        if (!s_confirmed) return tp;
+        if (s_upSamples == 0) s_firstUp = sampleAt;
+        if (s_upSamples < 2) ++s_upSamples;
+        if (s_upSamples >= 2 && sampleAt - s_firstUp >= 30) {
+            s_confirmed = false;
+            s_upSamples = 0;
+            return tp; // one physical release edge, never a spurious second tap
+        }
+        return s_lastPoint;
+    }
+    s_upSamples = 0;
+    if (!s_confirmed) {
+        if (s_downSamples == 0) s_firstDown = sampleAt;
+        if (s_downSamples < 2) ++s_downSamples;
+        if (s_downSamples < 2 || sampleAt - s_firstDown < 30) return tp;
+        s_confirmed = true;
+    }
+#else
     if (!readTouchRaw(a, b)) return tp;
+#endif
     const int w = tft.width(), h = tft.height();
     float sx, sy;
     TouchFit::toScreen(s_touchFit, a, b, screenRotation, sx, sy);
@@ -836,6 +871,13 @@ static TouchPoint pollTouch() {
         if (tp.y < 0) tp.y = 0; else if (tp.y >= h) tp.y = h - 1;
     }
     tp.valid = sane;
+#if defined(CYD40)
+    if (tp.valid) s_lastPoint = tp;
+    else {
+        s_confirmed = false;
+        s_downSamples = 0;
+    }
+#endif
     return tp;
 }
 
@@ -922,7 +964,14 @@ static bool readTouchRaw(int16_t& a, int16_t& b) {
     return true;
 #else
     if (usingCapTouch) return rawReadCap(a, b);
-#if defined(TOUCH_ON_DISPLAY_BUS) || defined(CYD35)
+#if defined(CYD40)
+    // Restore the earlier Hosyond-specific reader: its XPT2046 has
+    // too much ordinary positional jitter for the 3.5" panel's
+    // >600-pressure, 20-count coordinate agreement filter, which could
+    // reject real touches. The stable press/release gate in pollTouch()
+    // now handles false edges without tightening that raw coordinate test.
+    return rawReadResistive(a, b);
+#elif defined(TOUCH_ON_DISPLAY_BUS) || defined(CYD35)
     return rawReadFiltered(a, b);
 #else
     return rawReadResistive(a, b);

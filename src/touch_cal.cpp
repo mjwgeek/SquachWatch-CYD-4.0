@@ -14,7 +14,12 @@ void setDensityScale(float scale) { s_density = scale > 0.5f ? scale : 1.0f; }
 // The Fit lives in its own namespace, so a firmware that predates it (or a
 // rollback to one) never trips over it, and the old keys below stay exactly
 // where older firmware left them.
-#if defined(FREENOVE32)
+#if defined(CYD40)
+// Keep Hosyond 4.0 calibration isolated from the 3.5" board:
+// both panels share the same native pixel dimensions but need
+// different raw touch mappings. Restores the earlier known-good port.
+static const char* FIT_NS  = "cyd40fit";
+#elif defined(FREENOVE32)
 // The Freenove 3.2" keeps its calibration under its own names: the boards
 // that reached this build were flashed with the 2.8" build first (touch
 // never worked), and whatever that left behind must not be inherited. From
@@ -27,7 +32,9 @@ static const char* FIT_KEY = "fit";
 static const uint8_t FIT_VERSION = 1;
 
 // Where the calibrations written by older firmware live -- read-only now.
-#if defined(FREENOVE32)
+#if defined(CYD40)
+static const char* NS = "cyd40cal";
+#elif defined(FREENOVE32)
 static const char* NS = "fn32cal";
 #else
 static const char* NS = "touchcal";
