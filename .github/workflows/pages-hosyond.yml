@@ -85,6 +85,25 @@ jobs:
           with open(d+"/manifest.json","w") as f:json.dump(manifest,f,indent=2)
           PY
           done
+      - name: Validate USB rescue images and preserve-data prompt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for env in ("cyd40", "cyd40-fast"):
+              root = Path("_site/firmware") / env
+              m = json.loads((root / "manifest.json").read_text())
+              assert m["new_install_prompt_erase"] is True, env
+              parts = {p["offset"]: p["path"] for p in m["builds"][0]["parts"]}
+              assert parts == {
+                  4096: "bootloader.bin",
+                  32768: "partitions.bin",
+                  57344: "boot_app0.bin",
+                  65536: "firmware.bin",
+              }, (env, parts)
+              assert all((root / name).stat().st_size > 0 for name in parts.values())
+              print(f"{env}: preserve-data prompt and app0 boot selection verified")
+          PY
       - name: Package LCDWiki ESP32-S3 USB test build
         run: |
           dest="_site/firmware/lcdwiki-es3c40p"
