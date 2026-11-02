@@ -18,8 +18,24 @@
 #include "crowpanel7_buzzer.h"
 // The [frame] line's "rows" is whoever actually wrote them.
 #define SQW_PUSH_ROWS() CrowBlit::lastRows()
+#elif defined(TAB5)
+#include "tab5_board.h"
+#include "tab5_display.h"
+#include "tab5_panel.h"
+#include "tab5_blit.h"
+#define SQW_PUSH_ROWS() Tab5Blit::lastRows()
 #else
 #define SQW_PUSH_ROWS() FramePush::lastRows()
+#endif
+// The frame buffer forced into INTERNAL RAM on the boards whose blit reads it
+// scattered (the CrowPanel's twitch, the Tab5's column-wise walk): plain
+// calloc() of anything over CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL is served
+// from PSRAM on a PSRAM core, so the threshold is raised around the one
+// allocation. See the createSprite() calls below.
+#if (defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL) || (defined(TAB5) && TAB5_FRAME_INTERNAL)
+#define SQW_FRAME_FORCE_INTERNAL 1
+#else
+#define SQW_FRAME_FORCE_INTERNAL 0
 #endif
 #if defined(FREENOVE_S3_35)
 #include "st77922_display.h"
@@ -448,6 +464,10 @@ constexpr bool PANEL_NEEDS_INVERSION = false;
 // is a no-op and CrowPanelTFT hides it. False keeps the XOR in the Settings
 // handler meaningful rather than pretending a control exists.
 constexpr bool PANEL_NEEDS_INVERSION = false;
+#elif defined(TAB5)
+// A DSI video panel behind M5GFX; the app's INVERT setting has nothing to
+// send, so false keeps the Settings handler's XOR honest.
+constexpr bool PANEL_NEEDS_INVERSION = false;
 #else
 constexpr bool PANEL_NEEDS_INVERSION = false;
 #endif
@@ -491,6 +511,10 @@ public:
 // device type and only this hierarchy gives the two a common base. Nothing
 // is ever sent to an SPI display bus on this board -- see the header.
 CrowPanelTFT        tft;
+#elif defined(TAB5)
+// Likewise not a TFT_eSPI: a MIPI-DSI panel driven by M5GFX, wearing the
+// library's interface for the same reason -- see tab5_display.h.
+Tab5TFT             tft;
 #elif defined(FREENOVE_S3_35)
 // Likewise not a TFT_eSPI: an ST77922 on a four-lane QSPI bus, wearing the
 // library's interface for the same reason -- see st77922_display.h.
@@ -661,6 +685,10 @@ static bool rawReadResistive(int16_t& a, int16_t& b);
 // calibration is needed or wanted.
 static uint16_t CAP_NX_MIN = CROW_CAP_NX_MIN, CAP_NX_MAX = CROW_CAP_NX_MAX;
 static uint16_t CAP_NY_MIN = CROW_CAP_NY_MIN, CAP_NY_MAX = CROW_CAP_NY_MAX;
+#elif defined(TAB5)
+// M5GFX reports panel pixels of the rotated panel; a divide by TAB5_SCALE.
+static uint16_t CAP_NX_MIN = TAB5_CAP_NX_MIN, CAP_NX_MAX = TAB5_CAP_NX_MAX;
+static uint16_t CAP_NY_MIN = TAB5_CAP_NY_MIN, CAP_NY_MAX = TAB5_CAP_NY_MAX;
 #elif defined(FREENOVE_S3_35)
 // The ST77922's own touch reports panel pixels too: a pass-through.
 static uint16_t CAP_NX_MIN = St77922Touch::NX_MIN, CAP_NX_MAX = St77922Touch::NX_MAX;
@@ -885,6 +913,11 @@ static bool readTouchRaw(int16_t& a, int16_t& b) {
 #elif defined(FREENOVE_S3_35)
     uint16_t x, y;
     if (!St77922Touch::read(x, y)) return false;
+    a = (int16_t)x; b = (int16_t)y;
+    return true;
+#elif defined(TAB5)
+    uint16_t x, y;
+    if (!Tab5Touch::read(x, y)) return false;
     a = (int16_t)x; b = (int16_t)y;
     return true;
 #else
@@ -1278,6 +1311,19 @@ static void restoreFrameBuffer();
 // is dismissed, not to CLEAR. Set in enterAlert(), spent here.
 static bool s_backToDesk = false;
 static void enterDesk();
+#if SQUACH_LORA && defined(TDECK_PLUS)
+// The same for an ALERT that popped over the LORA page, its settings or the
+// chats (ON-SCREEN DETECTIONS): dismissed, it goes back to that page. Set in
+// enterAlert(), spent in enterClear(), and cleared whenever one of those
+// pages is entered, so a stale one can never bounce a later BACK.
+static AppState s_backToLora = AppState::CLEAR;
+static void enterLoraChat();
+static void enterLoraHome();
+static void enterLoraSettings(bool fresh);
+static bool onLoraPage() {
+    return state == AppState::LORA_HOME || state == AppState::LORA_SETTINGS || state == AppState::LORA_CHAT;
+}
+#endif
 
 // The screens that run the raw scan, which switches detection off while it
 // runs. Leaving one by anything but its own BACK -- the lock icon, the gear,
@@ -1293,6 +1339,15 @@ static void enterClear() {
     if (Security::locked()) { enterLocked(); return; }
     restoreFrameBuffer();   // lent to a download that did not end in a restart
     if (s_backToDesk) { s_backToDesk = false; enterDesk(); return; }
+#if SQUACH_LORA && defined(TDECK_PLUS)
+    if (s_backToLora != AppState::CLEAR) {
+        const AppState to = s_backToLora;
+        s_backToLora = AppState::CLEAR;
+        if (to == AppState::LORA_HOME)          { enterLoraHome(); return; }
+        if (to == AppState::LORA_SETTINGS)      { enterLoraSettings(false); return; }
+        if (to == AppState::LORA_CHAT)          { enterLoraChat(); return; }
+    }
+#endif
     Settings::deskActive(false);
     Theme::releaseClockBackdrop();   // the clock fire's heat, if the desk had one
     state = AppState::CLEAR;
@@ -1362,8 +1417,26 @@ static void squachyCatch(DetectionType type, const uint8_t* mac, uint32_t hits, 
 enum class Buzz : uint8_t { ALERT, WATCH, SAMPLE };
 static void twatchBuzz(Buzz kind);
 #endif
+// SNOOZE on the alert card: each tap steps through these, and the pick
+// locks in SNOOZE_PICK_MS after the last tap. 0 = not picking.
+struct SnoozeStep { IgnoreList::SnoozeDuration dur; const char* label; const char* toast; };
+static const SnoozeStep SNOOZE_STEP[] = {
+    { IgnoreList::SnoozeDuration::MIN_10, "10 MIN",  "for 10 min"  },
+    { IgnoreList::SnoozeDuration::MIN_30, "30 MIN",  "for 30 min"  },
+    { IgnoreList::SnoozeDuration::HOUR_1, "1 HOUR",  "for an hour" },
+    { IgnoreList::SnoozeDuration::HOUR_4, "4 HOURS", "for 4 hours" },
+};
+static const uint8_t  SNOOZE_STEPS   = sizeof SNOOZE_STEP / sizeof SNOOZE_STEP[0];
+static const uint32_t SNOOZE_PICK_MS = 3000;
+static uint8_t  s_snoozeStep  = 0;
+static uint32_t s_snoozeTapAt = 0;
+
 static void enterAlert(const Detection& d) {
+    s_snoozeStep = 0;
     s_backToDesk = (state == AppState::DESK);
+#if SQUACH_LORA && defined(TDECK_PLUS)
+    s_backToLora = onLoraPage() ? state : AppState::CLEAR;
+#endif
     state = AppState::ALERT;
 #if defined(TWATCH_S3)
     twatchBuzz(Buzz::ALERT);
@@ -1690,11 +1763,11 @@ static void restoreFrameBuffer() {
 #if !defined(CYD35)
     if (frameBufferOk) return;
     frame.setColorDepth(8);
-#if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
+#if SQW_FRAME_FORCE_INTERNAL
     heap_caps_malloc_extmem_enable(1u << 20);   // back into internal RAM, see setup()
 #endif
     const bool back = frame.createSprite(tft.width(), tft.height());
-#if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
+#if SQW_FRAME_FORCE_INTERNAL
     heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
 #endif
     if (back) {
@@ -2897,7 +2970,8 @@ void setup() {
     // Native USB: with nothing reading the port, every print would otherwise
     // wait its full timeout for a host, and after the chatty first-boot
     // calibration the loop crawled so slowly the screen looked frozen black.
-    // Drop the bytes instead when nobody is listening.
+    // Drop the bytes instead when nobody is listening. (The Tab5 showed the
+    // same thing on 2026-10-19: laggy and freezing only while on the cable.)
     Serial.setTxTimeoutMs(0);
 #endif
     delay(200);
@@ -3127,7 +3201,7 @@ void setup() {
     // writes into a PSRAM sprite starve it (see crowpanel7_board.h).
     frame.setAttribute(PSRAM_ENABLE, false);
 #endif
-#if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
+#if SQW_FRAME_FORCE_INTERNAL
     // PSRAM_ENABLE=false only makes TFT_eSPI call plain calloc() -- and on a
     // PSRAM-enabled Arduino core plain calloc() of anything over
     // CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL (4 KB here) is served from PSRAM
@@ -3136,7 +3210,7 @@ void setup() {
     heap_caps_malloc_extmem_enable(1u << 20);
 #endif
     const bool frameOk = frame.createSprite(tft.width(), tft.height());
-#if defined(CROWPANEL7) && CROWPANEL_FRAME_INTERNAL
+#if SQW_FRAME_FORCE_INTERNAL
     heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
     // Say where it landed: internal SRAM sits at 0x3FC8xxxx on the S3, PSRAM
     // at 0x3C000000..0x3DFFFFFF, and a frame in the wrong one is the twitch.
@@ -3552,6 +3626,10 @@ static inline void pushFrame(int x, int y) {
     // the 8->16 bit conversion on the way. It declines only if the panel
     // never came up, in which case there is nowhere to put the frame at all.
     CrowBlit::push(frame.buf(), frame.bufW(), frame.bufH(), x, y);
+#elif defined(TAB5)
+    // Same shape: the framebuffer is memory and Tab5Blit writes the changed
+    // columns into it, turned landscape and doubled on the way.
+    Tab5Blit::push(frame.buf(), frame.bufW(), frame.bufH(), x, y);
 #else
     if (frame.getColorDepth() != 8 ||
         !FramePush::push(tft, frame.buf(), frame.bufW(), frame.bufH(), x, y)) {
@@ -4717,6 +4795,42 @@ void loop() {
                 }
                 break;
             }
+            // A SNOOZE time being tapped through. Once picking has started
+            // the whole card is the SNOOZE button: a tap anywhere is the next
+            // step. A second tap that lands a few pixels off the button used
+            // to count as "somewhere else", lock the pick in and close the
+            // card (seen on the 3.5in, 2026-10-22). It locks in only when the
+            // taps stop: whatever the button shows then is what you get.
+            if (s_snoozeStep) {
+                const uint32_t since = now - s_snoozeTapAt;
+                if (tp.valid && (now - lastTouch) > TOUCH_DEBOUNCE_MS) {
+                    Serial.printf("[snooze] tap %d,%d after %u ms -> step %u\n", tp.x, tp.y,
+                                  (unsigned)since, (unsigned)(s_snoozeStep % SNOOZE_STEPS + 1));
+                    lastTouch     = now;
+                    s_snoozeStep  = (uint8_t)(s_snoozeStep % SNOOZE_STEPS + 1);
+                    s_snoozeTapAt = now;
+                    s_alertArmed  = false;
+                    uiAlertSetSnoozePick(SNOOZE_STEP[s_snoozeStep - 1].label, 1000);
+                    break;
+                }
+                if (since >= SNOOZE_PICK_MS) {
+                    Serial.printf("[snooze] locked step %u\n", (unsigned)s_snoozeStep);
+                    const SnoozeStep& st = SNOOZE_STEP[s_snoozeStep - 1];
+                    char sub[28];
+                    if (IgnoreList::snooze(s_alertMac, st.dur))
+                        snprintf(sub, sizeof sub, "This one, %s", st.toast);
+                    else
+                        snprintf(sub, sizeof sub, "Snooze list full");
+                    s_snoozeStep = 0;
+                    lastTouch = now;
+                    Theme::showToast("SNOOZED", sub, Theme::AMBER);
+                    squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
+                    enterClear();
+                    break;
+                }
+                uiAlertSetSnoozePick(SNOOZE_STEP[s_snoozeStep - 1].label,
+                                     (uint16_t)(1000 - since * 1000 / SNOOZE_PICK_MS));
+            }
             if (tp.valid && (now - lastTouch) > TOUCH_DEBOUNCE_MS) {
                 lastTouch = now;
                 if (uiAlertHitMoreInfo(tp.x, tp.y, tft.width(), tft.height())) {
@@ -4738,16 +4852,20 @@ void loop() {
                     squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
                     enterClear();
                 } else if (uiAlertHitSnooze(tp.x, tp.y, tft.width(), tft.height())) {
-                    // This device, until the board restarts: no more alerts
-                    // from it, while it goes on being scanned, counted and
-                    // logged like anything IGNOREd. Acknowledges the alert
-                    // like IGNORE does. See IgnoreList::snooze for why it
-                    // is no longer the whole type for an hour.
+                    // This device, for a while: no more alerts from it,
+                    // while it goes on being scanned, counted and logged like
+                    // anything IGNOREd. Each tap steps the time up (10 MIN,
+                    // 30 MIN, 1 HOUR, 4 HOURS, round again) and the card
+                    // stays up; SNOOZE_PICK_MS after the last tap the pick
+                    // locks in (above). No ALWAYS step: IGNORE is already
+                    // the forever button, and unlike a hidden always-snooze
+                    // it can be seen and undone from its list.
                     lastTouch = now;
-                    IgnoreList::snooze(s_alertMac);
-                    Theme::showToast("SNOOZED", "This one, until restart", Theme::AMBER);
-                    squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
-                    enterClear();
+                    s_snoozeStep  = (uint8_t)(s_snoozeStep % SNOOZE_STEPS + 1);
+                    s_snoozeTapAt = now;
+                    Serial.printf("[snooze] first tap %d,%d -> step %u\n", tp.x, tp.y, (unsigned)s_snoozeStep);
+                    s_alertArmed  = false;   // the next step needs a fresh tap, not a held finger
+                    uiAlertSetSnoozePick(SNOOZE_STEP[s_snoozeStep - 1].label, 1000);
                 } else if (uiAlertHitHunt(tp.x, tp.y, tft.width(), tft.height())) {
                     // Same call pair LOG's confirm panel makes. The
                     // DETECTION trigger fires here too: leaving via HUNT
@@ -4764,7 +4882,7 @@ void loop() {
                     squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
                     enterClear();
                 }
-            } else if ((now - alertStart) > ALERT_AUTO_DISMISS_MS) {
+            } else if ((now - alertStart) > ALERT_AUTO_DISMISS_MS && !s_snoozeStep) {
                 squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
                 enterClear();
             }
@@ -6501,6 +6619,8 @@ void loop() {
             info.usingCapTouch = usingCapTouch;
 #if defined(CROWPANEL7)
             info.boardName = "CrowPanel 7";
+#elif defined(TAB5)
+            info.boardName = "Tab5 LAB";
 #elif defined(TOUCH_ON_DISPLAY_BUS)
             info.boardName = "AWOK";
 #elif defined(CYD35)

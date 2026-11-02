@@ -608,6 +608,19 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
         // frame it dereferenced a stale one, LoadProhibited in
         // spi_bus_lock_bg_exit every 15 s to 6 min (the black box,
         // 2026-10-13). Nothing else on that board is a device of this driver.
+        //
+        // The Freenove S3 keeps it too, for a reason that has nothing to do
+        // with a radio. The S3 has two cores and the pusher is not pinned to
+        // either, so it can release the bus on one core while the interrupt
+        // for the frame's last chunk is still on its way out on the other.
+        // The IDF's bg_exit (4.4.6) reads the lock's acquiring device, checks
+        // it, then reads it AGAIN to wake it -- and the release had cleared it
+        // in between: LoadProhibited at address 0 in spi_bus_lock_bg_exit,
+        // from spi_intr, every 10 to 40 minutes (core dump, 2026-10-15). With
+        // the hold never let go, that field never goes back to null. Nothing
+        // else on the Freenove is a device of this driver either. The C5 still
+        // lets go each frame: one core, so the interrupt cannot be mid-exit
+        // while the pusher runs.
         if (dma && !s_pushHolds) { spi_device_acquire_bus(dmaHAL, portMAX_DELAY); s_pushHolds = true; }
 #endif
         for (int i = 0; i < n; i++) {

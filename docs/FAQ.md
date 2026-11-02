@@ -40,6 +40,7 @@ Everything on the [web flasher](https://squachwatch.com/), with the names it use
 | Board | Touch | On the flasher | Good to know |
 |---|---|---|---|
 | 2.8" CYD, ST7789 (ESP32-2432S028R) | Resistive | Yes | The usual screen. The 80 MHz box is ticked by default. |
+| DIYmalls 2.8" (JC2432W328C) | Capacitive | Yes | Named flasher option; shares the ST7789 `cyd` / `cyd-fast` firmware, which detects touch at startup. [Hardware and battery notes](DIYMALLS-28.md). |
 | 2.8" CYD, ILI9341 (ESP32-2432S028R) | Resistive | Yes | The older screen on the same board. Also the build for the ESP32-32E 2.8" (E32R28T). Leave 80 MHz unticked. |
 | 3.2" resistive (Freenove FNK0103) | Resistive | Yes | |
 | 3.2" capacitive (ESP32-2432S032C) | Capacitive | Yes (NEW) | Already runs at 80 MHz. |
@@ -53,8 +54,9 @@ Everything on the [web flasher](https://squachwatch.com/), with the names it use
 | M5Stack StickS3 | None, two buttons | BETA | Tiny 1.14" screen, landscape only. One button moves a cursor, the other presses. |
 | M5Stack Cardputer ADV | None, keyboard | BETA | Not the original Cardputer. Arrows and TAB move, ENTER presses, ESC goes home. |
 | LilyGo T-Watch S3 / S3 Plus | Capacitive | BETA | On your wrist. Battery, buzz, LoRa listening; the S3 Plus adds GPS. |
+| M5Stack Tab5 | Capacitive | Test builds only (`?lab=1`) | Experimental. A 5" tablet whose radio is a separate chip that needs our firmware first. Notes in [TAB5.md](TAB5.md). |
 
-Not sure which one you've got? The code on the back (like ESP32-2432S028R) tells you. The last letter is the touch: R is resistive (press), C is capacitive (tap). Type it into the flasher's box and it picks the build for you.
+Not sure which one you've got? Type the code on the back into the flasher's box. `JC2432W328C` selects the named DIYmalls option; `ESP32-2432S028R` selects the original CYD entry. For that CYD family, the last letter is the touch: R is resistive (press), C is capacitive (tap).
 
 BETA means it runs the whole firmware but has had less time on real hardware than the 2.8". It works; it just hasn't earned the right to be boring yet.
 
@@ -142,6 +144,8 @@ Be honest with yourself about what the PIN does: it stops a snoop who picks the 
 
 **The battery lamp.** On the Freenove ESP32-S3 2.8" and 3.5" and the T-Watch, a little lava lamp under the menu button is the battery: the lava is the charge. On the cable, bubbles stream up and a rainbow runs through the cap and base; under 10% it flickers. The Freenove boards work out the cable from the battery voltage jumping when you plug in, so it can take a few seconds to notice. Boards with no battery don't show a lamp.
 
+The DIYmalls JC2432W328C has a physical BAT connector and battery switch, but the board's battery-sensing circuit and charger have not been verified. SquachWatch does not show a battery percentage for it, and USB power must not be taken as evidence that USB charging is supported. See the [JC2432W328C hardware guide](DIYMALLS-28.md) before connecting a battery.
+
 **On the T-Watch:**
 
 - POWER SAVER is on by default. On battery the screen times out whatever you set; on the charger it stays lit like a desk clock.
@@ -166,7 +170,7 @@ The buttons:
 
 - **MORE INFO**: what this thing is and why it matched.
 - **IGNORE**: never alert on this exact device again. It's still logged and counted, with an IGNORED tag on its LOG row. Tap it again (it reads MUTED) or use Settings > IGNORED to undo it.
-- **SNOOZE**: quiet about this device until the board restarts.
+- **SNOOZE**: quiet about this device for a while. Tap once for 10 minutes, twice for 30, three times for an hour, four times for 4 hours. The button shows the time, and it locks in three seconds after your last tap. After the first tap the card says TAP AGAIN: LONGER. For good, use IGNORE.
 - **HUNT**: a hot/cold fox hunt for that device, GETTING WARMER or GETTING COLDER as you move. STOP HUNT ends it.
 
 **Too many alerts?**

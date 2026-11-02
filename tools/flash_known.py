@@ -134,7 +134,7 @@ def main():
                             "0x8000", os.path.join(build, "partitions.bin"),
                             "0xe000", boot_app0,
                             "0x10000", os.path.join(build, "firmware.bin")], cwd=ROOT)
-    elif env in ("nm-cyd-c5", "marauder-v8"):
+    elif env in ("nm-cyd-c5", "marauder-v8", "tab5"):
         # The C5's toolchain (pioarduino) installs its own core into whatever
         # penv runs it, and run from the shared one it broke `pio` for every
         # board (2026-10-02). It lives in a core dir of its own, and its

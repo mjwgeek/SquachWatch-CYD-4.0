@@ -70,7 +70,32 @@ void applyListen(uint8_t listen);
 // for the time on air (half a second on LongFast) with the sniffer parked.
 // False when the radio is absent, the preset is not in this band plan, the
 // text is empty, or the send failed.
-bool sendText(Proto p, const char* name, const char* text, int8_t dbm);
+//
+// `chan` is the decoder's own channel index to send on (MeshCore::channel(),
+// Meshtastic::channel()), sealed with THAT channel's key and carrying ITS hash;
+// our copy files under it in the ring. -1, the default, is the network's
+// default channel -- Meshtastic's preset channel, MeshCore's Public -- which is
+// what every send was before the channel chip, and what the console's bench
+// sends still use. A channel that cannot be sent on (Lora::Chan::txSendable:
+// muted, gone, a 32-byte key, a preset that is not ours) is refused, never
+// swapped for another: a private line must not leave on the public channel.
+// The Meshtastic NodeInfo before a text always goes on the preset channel --
+// a name is announced publicly, not inside somebody's private channel.
+bool sendText(Proto p, const char* name, const char* text, int8_t dbm, int16_t chan = -1);
+// The LORA SETTINGS page's (the T-Deck). A name changed: the next Meshtastic
+// text sends the NodeInfo first again. CLEAR CHATS empties the message ring;
+// FORGET NAMES empties the remembered Meshtastic names and their stored copy
+// (the 'loranames' NVS namespace).
+void identityChanged();
+void clearChats();
+void forgetNames();
+// CHANNELS on the same page: add one through the console's own path (LORA
+// CHAN: checked, added, stored), drop a user's row by its channelRow number
+// (a built-in refuses), and a saved key as its first and last four characters
+// only. `msg` gets a short line for the screen.
+bool channelAdd(Proto p, const char* name, const char* key, char* msg, size_t cap);
+bool channelDropRow(uint8_t row);
+void channelKeyPreview(uint8_t row, char* out, size_t cap);
 void setFocus(uint8_t profileIdx);
 uint8_t focus();
 // Which profiles the survey rotates through, as a bitmask over the table
@@ -228,7 +253,13 @@ inline void statusLine(char* out, size_t cap) { if (cap) out[0] = '\0'; }
 inline void tick(uint32_t) {}
 inline void setMode(Mode) {}
 inline void applyListen(uint8_t) {}
-inline bool sendText(Proto, const char*, const char*, int8_t) { return false; }
+inline bool sendText(Proto, const char*, const char*, int8_t, int16_t = -1) { return false; }
+inline void identityChanged() {}
+inline void clearChats() {}
+inline void forgetNames() {}
+inline bool channelAdd(Proto, const char*, const char*, char* msg, size_t cap) { if (msg && cap) msg[0] = '\0'; return false; }
+inline bool channelDropRow(uint8_t) { return false; }
+inline void channelKeyPreview(uint8_t, char* out, size_t cap) { if (cap) out[0] = '\0'; }
 inline Mode mode() { return Mode::OFF; }
 inline void setFocus(uint8_t) {}
 inline uint8_t focus() { return 0; }

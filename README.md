@@ -90,7 +90,7 @@ whole firmware but has had fewer hours on it. The longer answer is in
 | AWOK 2.4" — ESP32 Marauder v6.1 | Yes | |
 | 3.5" resistive / capacitive — ESP32-3248S035R / C | BETA | |
 | ESP32-32E 2.8" / 3.5" — E32R28T / E32R35T | Via another build | Takes the 2.8" CYD ILI9341 build and the 3.5" resistive one; type the code into the flasher's board finder |
-| Freenove ESP32-S3 2.8" — FNK0104B | BETA | Capacitive touch, SDMMC card slot, WS2812 light, battery connector. Pins in [docs/PINOUT.md](docs/PINOUT.md) |
+| Freenove ESP32-S3 2.8" — FNK0104B | BETA | Capacitive touch, SDMMC card slot, WS2812 light, battery connector. Torn screen? On the flasher, untick 80 MHz under Advanced for the 40 MHz build. Pins in [docs/PINOUT.md](docs/PINOUT.md) |
 | Freenove ESP32-S3 4.0" — FNK0104S | BETA (build it yourself) | The 2.8"'s board with a 320×480 ST7796: `pio run -e freenove-s3-40 -t upload`. Not on the flasher yet |
 | Freenove ESP32-S3 3.5" — FNK0104N | BETA | The black 3.5": a 320×480 panel on its own QSPI driver, capacitive touch, SDMMC card slot, WS2812 light, battery connector. Big text, and pets at double size |
 | Elecrow CrowPanel Advance 7.0 | BETA | 800×480, drawn at 400×240 doubled on purpose. Has a buzzer, silent unless you switch it on. [docs/CROWPANEL7.md](docs/CROWPANEL7.md) |
@@ -100,9 +100,12 @@ whole firmware but has had fewer hours on it. The longer answer is in
 | M5Stack StickS3 | BETA | 1.14" screen, landscape, two buttons |
 | M5Stack Cardputer ADV | BETA | Driven from its keyboard. Not the original Cardputer |
 | LilyGo T-Watch S3 / S3 Plus | BETA | On your wrist, with a battery and a buzz. Listens to **LoRa**; the S3 Plus adds **GPS**. See [On the watch](#on-the-watch) |
+| M5Stack Tab5 | Test builds only (`?lab=1`) | 5" 1280×720 tablet on an ESP32-P4, whose radio is a separate ESP32-C6. WiFi and Bluetooth detection both work, but the C6 needs our firmware written first. No SD, sound or battery yet. [docs/TAB5.md](docs/TAB5.md) |
 
-Each board has its own build in `platformio.ini`, one `[env:...]` each, with
-what is and is not confirmed on it.
+Board builds and their confirmed hardware support are listed in
+`platformio.ini`. Compatible variants can share an environment when runtime
+detection handles their hardware differences, as with the original CYD and
+the DIYmalls JC2432W328C.
 
 ## Web Flash
 
@@ -263,7 +266,7 @@ the screen.
 | Control | Where | What it does |
 |---|---|---|
 | **IGNORE** | The alert card, or a LOG row | That one device never raises an alert again, and its LOG row wears an IGNORED tag. UN-IGNORE undoes it; Settings → IGNORED lists them all |
-| **SNOOZE** | The alert card | The same, until the board restarts |
+| **SNOOZE** | The alert card | The same, for a while: each tap steps it up (10 min, 30 min, 1 hour, 4 hours), and it locks in three seconds after the last tap |
 | **AUTO SNOOZE** | Settings: OFF, AFTER 5, AFTER 10 | After that many alerts a device has to come 7 dB closer than it ever has before it may interrupt again. Its allowance comes back after half an hour |
 | **ALERT FILTER** | Settings: ALL, MED+, HIGH ONLY | The lowest confidence allowed to take over the screen |
 | **TYPE FILTER** | Settings | Whole detection types on or off. An off type is dropped, not logged |
@@ -573,6 +576,7 @@ SquachWatch-CYD/
 │   ├── DETECTIONS.md             (per-signature provenance)
 │   ├── CROWPANEL7.md             (the 7" CrowPanel: setup and testing)
 │   ├── NM-CYD-C5.md              (the ESP32-C5 board: esptool route, every pin)
+│   ├── TAB5.md                   (the M5Stack Tab5: P4 + C6, the radio link, status)
 │   ├── LORA.md                   (LoRa research and the decoders behind it)
 │   ├── IDEAS.md                  (things worth building, with their cost)
 │   └── SQUACHWARE-AESTHETIC.md   (CSS → RGB565 mapping)
