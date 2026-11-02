@@ -641,6 +641,18 @@ int main(int argc, char** argv) {
     // main.cpp shows one (banner plus Squachy's line), e.g. 1|NESSIE for a
     // Flock. The banner is drawn on CLEAR only while this is set.
     static char huSub[40], huLine[40];
+    const char* simToast = getenv("SQUACHSIM_TOAST");
+    if (simToast && *simToast) {
+        char head[48] = "", detail[72] = "";
+        const char* bar = strchr(simToast, '|');
+        if (bar) {
+            snprintf(head, sizeof head, "%.*s", (int)(bar - simToast), simToast);
+            snprintf(detail, sizeof detail, "%s", bar + 1);
+        } else {
+            snprintf(head, sizeof head, "%s", simToast);
+        }
+        Theme::showToast(head, detail, Theme::AMBER, 8000);
+    }
     const bool headsUp = getenv("SQUACHSIM_HEADSUP") != nullptr;
     if (headsUp) {
         int ty = 0; char who[16] = "NESSIE";
