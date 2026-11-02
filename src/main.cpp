@@ -1711,6 +1711,9 @@ static const char* updateRefusedWhy() {
     return Security::locked() ? "Unlock the board first" : "Try again in a moment";
 }
 
+#if defined(CYD40)
+static void lendFrameToDownload();  // defined with the frame-buffer helpers below
+#endif
 static void startNudgedUpdate() {
     s_auto = {};
     if (!OtaWifi::hasSaved())
@@ -1722,6 +1725,9 @@ static void startNudgedUpdate() {
     }
     enterUpdate();
     engine.startUpdateRadio();
+#if defined(CYD40)
+    lendFrameToDownload();
+#endif
     if (!OtaWifi::begin()) {
         engine.stopUpdateRadio();
         memset(s_auto.pass, 0, sizeof s_auto.pass);
@@ -1775,7 +1781,10 @@ static void autoUpdateTick(uint32_t now) {
 // it. Afterwards the screens draw straight to the panel, the fallback a
 // failed rotate already uses.
 static void releaseFrameBuffer(const char* who) {
-#if !defined(CYD35)
+#if !defined(CYD35) || defined(CYD40)
+    // The Hosyond 4" inherits CYD35's half-height sprite, but unlike
+    // CYD35 it must establish a TLS connection to GitHub Pages. Temporarily
+    // free its ~77 KB sprite so mbedTLS can allocate a handshake buffer.
     if (!frameBufferOk) return;
     frame.deleteSprite();
     frameBufferOk = false;
@@ -1809,20 +1818,27 @@ static void lendFrameToDownload() {
 static void restoreFrameBuffer() {
     if (!s_frameLent) return;
     s_frameLent = false;
-#if !defined(CYD35)
+#if !defined(CYD35) || defined(CYD40)
     if (frameBufferOk) return;
     frame.setColorDepth(8);
 #if SQW_FRAME_FORCE_INTERNAL
     heap_caps_malloc_extmem_enable(1u << 20);   // back into internal RAM, see setup()
 #endif
+#if defined(CYD40)
+    const bool back = frame.createSprite(tft.width(), tft.height() / 2);
+#else
     const bool back = frame.createSprite(tft.width(), tft.height());
+#endif
 #if SQW_FRAME_FORCE_INTERNAL
     heap_caps_malloc_extmem_enable(CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL);
 #endif
     if (back) {
         frame.setTextSize(1);
         frameBufferOk = true;
+#if !defined(CYD35)
         canvas = &frame;
+#endif
+        FramePush::invalidate();
         Serial.println("[ota] frame buffer back");
     } else {
         Serial.printf("[ota] frame buffer could not come back (largest block %lu); unbuffered until restart\n",
@@ -3888,6 +3904,14 @@ void loop() {
     OtaCore::tick(now);
     OtaBle::tick(now);
     OtaWifi::tick(now);
+#if defined(CYD40)
+    // The secure OTA check can run with the half-height sprite freed. Put it
+    // back only after the worker is completely gone and the user has left
+    // the update flow; otherwise restoring the sprite could starve TLS again.
+    if (s_frameLent && state != AppState::UPDATE && state != AppState::WIFI_PASS &&
+        OtaWifi::state() == OtaWifi::State::OFF && !OtaWifi::taskActive())
+        restoreFrameBuffer();
+#endif
     if (state == AppState::CLEAR) {
         const char* sub = nullptr;
         bool good = false;
@@ -4296,6 +4320,9 @@ void loop() {
                         // carries it from there.
                         enterUpdate();
                         engine.startUpdateRadio();
+#if defined(CYD40)
+                        lendFrameToDownload();
+#endif
                         if (!OtaWifi::begin()) {
                             engine.stopUpdateRadio();
                             Theme::showToast("CAN'T START UPDATE", updateRefusedWhy(), Theme::AMBER);
@@ -5827,6 +5854,11 @@ void loop() {
                 switch (uiUpdateHitTest(*canvas, tp.x, tp.y, &netIndex)) {
                     case UpdateHit::WIFI_START:
                         engine.startUpdateRadio();
+#if defined(CYD40)
+                        // The first HTTPS request is the version check, not
+                        // INSTALL. Give the TLS handshake its heap NOW.
+                        lendFrameToDownload();
+#endif
                         if (!OtaWifi::begin()) {
                             engine.stopUpdateRadio();
                             Theme::showToast("CAN'T START UPDATE", updateRefusedWhy(), Theme::AMBER);
@@ -5898,7 +5930,7 @@ void loop() {
             // frame buffer and without it (given up for a download).
 #if defined(CYD40)
             DrawBand::all();
-            frame.resetViewport();
+            if (frame.created()) frame.resetViewport();
             uiWifiPassTick(tft, now);
             FramePush::invalidate();
 #else

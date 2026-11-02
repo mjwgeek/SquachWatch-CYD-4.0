@@ -2,7 +2,8 @@
 //
 // The board finds nearby networks, you pick yours and type the password on
 // the board, and it downloads the latest release for its own build straight
-// from squachwatch.com. No computer, no browser, so it works for anybody --
+// from the configured release site (GitHub Pages over HTTPS on CYD40). No
+// computer or browser is needed, so it works for anybody --
 // iPhone owners included. Everything that makes the install itself safe is in
 // OtaCore (ota_core.h); this file only gets the bytes there.
 //
@@ -20,9 +21,9 @@
 //
 // OTA_WIFI_BASE overrides where it downloads from, for a bench test against a
 // local server: PLATFORMIO_BUILD_FLAGS='-DOTA_WIFI_BASE=\"http://192.168.4.42:8767/\"'.
-// Plain http is accepted there and nowhere else by default.
-// -DOTA_TEST_NO_DNS makes every name lookup "fail", to prove the fallback to
-// squachwatch.com's fixed addresses (see connectSite() in ota_wifi.cpp).
+// CYD40 uses HTTPS and the fork's own signing key; the other upstream builds
+// use their existing HTTP endpoint. OTA_TEST_NO_DNS tests the fallback
+// addresses on upstream HTTP only; a secure connection requires hostname/SNI.
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
@@ -62,6 +63,9 @@ void tick(uint32_t now);
 void rescan();
 
 State       state();
+// True until the update worker has fully exited, even if State is already OFF.
+// Lets the CYD40 UI restore its display buffer without racing a TLS request.
+bool        taskActive();
 uint8_t     netCount();
 const Net*  net(uint8_t i);
 
