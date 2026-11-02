@@ -270,6 +270,9 @@ uint16_t s_port       = 80;
 bool     s_https      = false;
 char     s_prefix[48] = "/";
 bool     s_noName     = false;   // the name lookup failed this session: go straight to the fixed addresses
+#if defined(CYD40)
+bool     s_tlsFailed  = false;   // DNS succeeded, but HTTPS connection/handshake did not
+#endif
 
 void parseBase() {
     if (s_host[0]) return;
@@ -300,9 +303,35 @@ bool ourHost(const char* h, size_t n) {
 bool connectSite(WiFiClient& c, uint32_t budgetMs) {
 #if defined(CYD40)
     if (s_https) {
-        // Connect by hostname, not by IP: GitHub Pages requires correct SNI.
-        // Do not fall back to a different host if this connection fails.
-        return static_cast<WiFiClientSecure&>(c).connect(s_host, s_port);
+        // HTTPS to this fork's GitHub Pages host, not upstream's HTTP site.
+        // Resolve first so the failure can distinguish DNS from TLS: the
+        // previous generic "no connection" hid the actual cause.
+        s_tlsFailed = false;
+        IPAddress resolved;
+        if (!WiFi.hostByName(s_host, resolved)) {
+            s_noName = true;
+            Serial.printf("[ota] GitHub Pages DNS failed for %s (DNS %s, %s)\n",
+                          s_host, WiFi.dnsIP(0).toString().c_str(),
+                          WiFi.dnsIP(1).toString().c_str());
+            return false;
+        }
+        s_noName = false;
+        // Keep the original hostname: a raw IP bypass would lose GitHub
+        // Pages' SNI virtual-host selection. Firmware remains ECDSA signed.
+        auto& tls = static_cast<WiFiClientSecure&>(c);
+        tls.setHandshakeTimeout(12);
+        Serial.printf("[ota] HTTPS %s:%u (%s), free %lu, largest %lu\n",
+                      s_host, (unsigned)s_port, resolved.toString().c_str(),
+                      (unsigned long)ESP.getFreeHeap(),
+                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        const bool ok = tls.connect(s_host, s_port);
+        if (!ok) {
+            s_tlsFailed = true;
+            Serial.printf("[ota] HTTPS connect/handshake failed for %s; free %lu, largest %lu\n",
+                          s_host, (unsigned long)ESP.getFreeHeap(),
+                          (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        }
+        return ok;
     }
 #endif
     const uint32_t t0 = millis();
@@ -366,7 +395,15 @@ bool readLine(WiFiClient& c, char* out, size_t cap, uint32_t timeoutMs) {
 void noteWhy(const Reply& r) {
     switch (r.got) {
         case Got::OK:         s_why[0] = '\0'; return;
-        case Got::NO_CONNECT: snprintf(s_why, sizeof s_why, s_noName ? "name lookup failed" : "no connection"); return;
+        case Got::NO_CONNECT:
+#if defined(CYD40)
+            snprintf(s_why, sizeof s_why,
+                     s_noName ? "GitHub DNS lookup failed" :
+                     s_tlsFailed ? "HTTPS handshake failed" : "no connection");
+#else
+            snprintf(s_why, sizeof s_why, s_noName ? "name lookup failed" : "no connection");
+#endif
+            return;
         case Got::NO_ANSWER:  snprintf(s_why, sizeof s_why, r.code ? "reply cut short" : "no reply"); return;
         default:
             if (r.code) snprintf(s_why, sizeof s_why, "HTTP %d", r.code);
@@ -1058,24 +1095,27 @@ bool bootCheck(uint32_t budgetMs) {
         // whole budget would have wrapped it round to about fifty days.
         const uint32_t usedJ = millis() - tj;
         const uint32_t left  = usedJ + 1000 < budgetMs ? budgetMs - usedJ : 1000;
-        // Plain HTTP, on purpose. A TLS handshake wants 40 KB in one piece
-        // and five to ten seconds, and one that timed out left a dead
-        // connection in the middle of the heap that cost the frame buffer
-        // its block -- measured, twice. Nothing rides on this answer but a
-        // notice; an install checks the signature. One try only: the boot
-        // is waiting, and the update screen knocks again with words.
-        WiFiClient plain;
+        // The Hosyond fork uses an HTTPS GitHub Pages endpoint. Passing
+        // plain WiFiClient through get() and casting it to WiFiClientSecure
+        // in connectSite() was undefined behavior. Instantiate the proper
+        // client for each board and release its TLS heap at boot-check exit.
+#if defined(CYD40)
+        WiFiClientSecure bootConnection;
+        bootConnection.setInsecure(); // update images authenticated by signed ECDSA
+#else
+        WiFiClient bootConnection;
+#endif
         char file[48];
         snprintf(file, sizeof file, "manifest-%s.json", OtaCore::buildName());
-        const Reply rp = get(plain, file, left > 60000 ? 60000 : left);
+        const Reply rp = get(bootConnection, file, left > 60000 ? 60000 : left);
         {
             if (rp.got == Got::OK) {
                 const int total = (int)rp.length;
                 const uint32_t t1 = millis();
                 while (len < sizeof body - 1 && (total < 0 || (int)len < total) && millis() - t1 < left) {
-                    const int a = plain.available();
-                    if (a > 0) { const int r = plain.read(body + len, (size_t)a < sizeof body - 1 - len ? (size_t)a : sizeof body - 1 - len); if (r > 0) len += (size_t)r; }
-                    else if (!plain.connected()) break;
+                    const int a = bootConnection.available();
+                    if (a > 0) { const int r = bootConnection.read(body + len, (size_t)a < sizeof body - 1 - len ? (size_t)a : sizeof body - 1 - len); if (r > 0) len += (size_t)r; }
+                    else if (!bootConnection.connected()) break;
                     else delay(5);
                 }
                 Serial.printf("[ota] boot check: manifest %u bytes in %lu ms\n", (unsigned)len, (unsigned long)(millis() - t1));
@@ -1093,7 +1133,7 @@ bool bootCheck(uint32_t budgetMs) {
             } else {
                 Serial.printf("[ota] boot check: manifest: %s\n", s_why);
             }
-            plain.stop();
+            bootConnection.stop();
         }
         // The clock, asked AFTER the manifest rather than alongside it. The
         // two used to overlap to save a moment, and on two boots in three
