@@ -142,7 +142,13 @@ static const SettingsRow SYSTEM_ROWS[] = {
 #endif
 #endif
     SettingsRow::CALIBRATE, SettingsRow::CHECK_COLORS,
-    SettingsRow::DIAGNOSTICS, SettingsRow::UPDATE_FIRMWARE, SettingsRow::UPDATE_CHECK, SettingsRow::WIFI_NETWORKS,
+    SettingsRow::DIAGNOSTICS, SettingsRow::UPDATE_FIRMWARE,
+#if !defined(CYD40)
+    // Hosyond does not contact the update server at boot. Do not offer an
+    // AT BOOT switch that cannot and must not be enabled on this board.
+    SettingsRow::UPDATE_CHECK,
+#endif
+    SettingsRow::WIFI_NETWORKS,
     SettingsRow::RESET_STATS,
 };
 static const uint8_t SYSTEM_ROWS_N = sizeof(SYSTEM_ROWS) / sizeof(SYSTEM_ROWS[0]);
@@ -946,8 +952,8 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             label = "DIAGNOSTICS";
             break;
         case SettingsRow::UPDATE_FIRMWARE:
-            // The row names the newer version when one is known, so the boot
-            // check and a member's hello have somewhere to point.
+            // The row names the newer version when one is known. On Hosyond,
+            // only a user-initiated manual update can populate that version.
             label = "UPDATE FIRMWARE";
             if (OtaCore::availableVersion()[0]) { snprintf(valBuf, valBufN, "v%s >", OtaCore::availableVersion()); value = valBuf; }
             else value = ">";
