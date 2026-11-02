@@ -1711,6 +1711,9 @@ static const char* updateRefusedWhy() {
     return Security::locked() ? "Unlock the board first" : "Try again in a moment";
 }
 
+#if defined(CYD40)
+static void lendFrameToDownload();  // defined with the frame-buffer helpers below
+#endif
 static void startNudgedUpdate() {
     s_auto = {};
     if (!OtaWifi::hasSaved())
@@ -1722,6 +1725,9 @@ static void startNudgedUpdate() {
     }
     enterUpdate();
     engine.startUpdateRadio();
+#if defined(CYD40)
+    lendFrameToDownload();
+#endif
     if (!OtaWifi::begin()) {
         engine.stopUpdateRadio();
         memset(s_auto.pass, 0, sizeof s_auto.pass);
@@ -4314,6 +4320,9 @@ void loop() {
                         // carries it from there.
                         enterUpdate();
                         engine.startUpdateRadio();
+#if defined(CYD40)
+                        lendFrameToDownload();
+#endif
                         if (!OtaWifi::begin()) {
                             engine.stopUpdateRadio();
                             Theme::showToast("CAN'T START UPDATE", updateRefusedWhy(), Theme::AMBER);
