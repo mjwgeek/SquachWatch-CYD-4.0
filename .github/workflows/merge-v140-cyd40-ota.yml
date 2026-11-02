@@ -1,0 +1,111 @@
+name: Stage upstream v1.40.0 for Hosyond CYD40 with Wi-Fi OTA
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/merge-v140-cyd40-ota.yml'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  stage-and-build:
+    # Only work on our fork's named staging branch; never merge into master.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'sync/upstream-v1.40.0-cyd40-ota'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sync/upstream-v1.40.0-cyd40-ota
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Preflight and merge upstream release while retaining fork-owned files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f include/cyd40_user_setup.h
+          test -f src/board_audio.cpp
+          test -f include/ota_pubkey.h
+          test -f src/ota_wifi.cpp
+          test -f src/ota_core.cpp
+          test -f CYD40_WIFI_OTA.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add squachwatch-upstream https://github.com/skizzophrenic/SquachWatch-CYD.git
+          git fetch --no-tags squachwatch-upstream refs/tags/v1.40.0
+          BASE="$(git rev-parse HEAD)"
+          echo "Fork base: $BASE"
+          echo "Upstream release: $(git rev-parse FETCH_HEAD)"
+          if ! git merge --squash -X ours FETCH_HEAD; then
+            echo "Upstream merge had conflicts; preserve the fork for conflicting files."
+            while IFS= read -r path; do
+              test -n "$path" || continue
+              echo "PRESERVE FORK-SIDE CONFLICT: $path"
+              if git checkout --ours -- "$path"; then
+                git add -- "$path"
+              else
+                git rm -f --ignore-unmatch -- "$path"
+              fi
+            done < <(git diff --name-only --diff-filter=U)
+          fi
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git add -A
+          # Never import upstream workflows into this fork.
+          git restore --source="$BASE" --staged --worktree -- .github/workflows
+          # Preserve exact board pins, original speaker/battery integration,
+          # OTA identity, published GitHub Pages URL, and signing public key.
+          for path in include/cyd40_user_setup.h src/board_audio.cpp \
+             src/ota_wifi.cpp src/ota_core.cpp include/ota_pubkey.h \
+             CYD40_WIFI_OTA.md HOSYOND_CYD40.md; do
+            git restore --source="$BASE" --staged --worktree -- "$path"
+          done
+          grep -Fq 'https://mjwgeek.github.io/SquachWatch-CYD-4.0/' src/ota_wifi.cpp
+          grep -Fq '#define OTA_PUBKEY_IS_TEST 0' include/ota_pubkey.h
+          grep -Fq 'OTA_SIGNING_KEY' .github/workflows/pages-hosyond.yml
+          grep -Fq '[env:cyd40]' platformio.ini
+          grep -Fq '[env:cyd40-fast]' platformio.ini
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No upstream changes remained after preservation."
+          else
+            git commit -m "Stage SquachWatch upstream v1.40.0, preserving Hosyond CYD40 and signed Wi-Fi OTA"
+          fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Compile both Hosyond variants
+        run: pio run -e cyd40 -e cyd40-fast
+      - name: Verify dual-slot OTA size and flash files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for env in ('cyd40','cyd40-fast'):
+              root=Path('.pio/build')/env
+              for name in ('firmware.bin', 'bootloader.bin', 'partitions.bin'):
+                  assert (root/name).stat().st_size>0, (env,name)
+              size=(root/'firmware.bin').stat().st_size
+              slot=0x1E0000
+              assert size<slot, f'{env}: {size} bytes exceeds OTA slot {slot}'
+              print(f'{env}: {size} byte firmware, OTA slot remaining: {slot-size} bytes')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: squachwatch-cyd40-v140-ota-staging
+          path: |
+            .pio/build/cyd40/firmware.bin
+            .pio/build/cyd40/bootloader.bin
+            .pio/build/cyd40/partitions.bin
+            .pio/build/cyd40-fast/firmware.bin
+            .pio/build/cyd40-fast/bootloader.bin
+            .pio/build/cyd40-fast/partitions.bin
+          retention-days: 30
+      - name: Push ONLY the tested source to the staging branch
+        run: |
+          set -euo pipefail
+          git push origin HEAD:refs/heads/sync/upstream-v1.40.0-cyd40-ota
+          echo "Master was not modified. OTA publishing remains master-only after review."
