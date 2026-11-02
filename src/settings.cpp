@@ -732,15 +732,10 @@ void load() {
     s_remoteUpdate = s_prefs.getBool("rmtUpd", true);
     s_phraseShown  = s_prefs.getBool("phrShow", true);
 #if defined(CYD40)
-    // One-time safety migration after the 2.0.12 boot-loop recovery. Previous
-    // releases left updChk=true even while the menu displayed PAUSED. Never
-    // silently reactivate an untested boot-time HTTPS check on upgrade.
-    // The owner may explicitly opt back in from SYSTEM after this migration.
-    if (!s_prefs.getBool("updSafe1", false)) {
-        s_prefs.putBool("updChk", false);
-        s_prefs.putBool("updSafe1", true);
-    }
-    s_updateCheck  = s_prefs.getBool("updChk", false);
+    // Boot-time update checking is permanently disabled on Hosyond. Even if
+    // an earlier 2.0.13 image saved updChk=true, ignore it without modifying
+    // the rest of NVS. Manual Wi-Fi OTA does not depend on this preference.
+    s_updateCheck = false;
 #else
     s_updateCheck  = s_prefs.getBool("updChk", true);
 #endif
