@@ -953,7 +953,11 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             else value = ">";
             break;
         case SettingsRow::UPDATE_CHECK:
+#if defined(CYD40)
+            label = "UPDATE CHECK"; value = "PAUSED";
+#else
             label = "UPDATE CHECK"; value = Settings::updateCheck() ? "AT BOOT" : "OFF";
+#endif
             break;
         case SettingsRow::WIFI_NETWORKS:
             label = "WIFI NETWORKS";

@@ -53,23 +53,31 @@ jobs:
         run: |
           mkdir -p _site/firmware/cyd40 _site/firmware/cyd40-fast
           cp webflasher/index.html _site/index.html
+          # A USB rescue must explicitly select app0. Without otadata, the
+          # bootloader may still select a stale app1 from an earlier OTA.
+          # boot_app0.bin resets only OTA-selection metadata at 0xE000; it
+          # does not overwrite the NVS settings partition at 0x9000.
+          ota="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+          test -s "$ota"
           for env in cyd40 cyd40-fast; do
             dest="_site/firmware/$env"
             cp ".pio/build/$env/firmware.bin" "$dest/firmware.bin"
             cp ".pio/build/$env/bootloader.bin" "$dest/bootloader.bin"
             cp ".pio/build/$env/partitions.bin" "$dest/partitions.bin"
+            cp "$ota" "$dest/boot_app0.bin"
             python - "$dest" "$env" <<'PY'
           import json,sys
           d,env=sys.argv[1:]
           manifest={
             "name":"SquachWatch Hosyond 4.0 ("+env+")",
             "version":__import__("os").environ["SQW_VERSION"],
-            "new_install_prompt_erase":False,
+            "new_install_prompt_erase":True,
             "builds":[{
               "chipFamily":"ESP32",
               "parts":[
                 {"path":"bootloader.bin","offset":4096},
                 {"path":"partitions.bin","offset":32768},
+                {"path":"boot_app0.bin","offset":57344},
                 {"path":"firmware.bin","offset":65536}
               ]
             }]
@@ -77,6 +85,25 @@ jobs:
           with open(d+"/manifest.json","w") as f:json.dump(manifest,f,indent=2)
           PY
           done
+      - name: Validate USB rescue images and preserve-data prompt
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for env in ("cyd40", "cyd40-fast"):
+              root = Path("_site/firmware") / env
+              m = json.loads((root / "manifest.json").read_text())
+              assert m["new_install_prompt_erase"] is True, env
+              parts = {p["offset"]: p["path"] for p in m["builds"][0]["parts"]}
+              assert parts == {
+                  4096: "bootloader.bin",
+                  32768: "partitions.bin",
+                  57344: "boot_app0.bin",
+                  65536: "firmware.bin",
+              }, (env, parts)
+              assert all((root / name).stat().st_size > 0 for name in parts.values())
+              print(f"{env}: preserve-data prompt and app0 boot selection verified")
+          PY
       - name: Package LCDWiki ESP32-S3 USB test build
         run: |
           dest="_site/firmware/lcdwiki-es3c40p"
@@ -97,7 +124,7 @@ jobs:
           manifest = {
               "name": "SquachWatch LCDWiki ES3C40P 4.0 IPS (EXPERIMENTAL)",
               "version": os.environ["SQW_VERSION"] + "-test",
-              "new_install_prompt_erase": False,
+              "new_install_prompt_erase": True,
               "builds": [{
                   "chipFamily": "ESP32-S3",
                   "parts": [
