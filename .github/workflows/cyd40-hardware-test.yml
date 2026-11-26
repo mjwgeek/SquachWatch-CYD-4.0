@@ -1,0 +1,78 @@
+name: Hosyond CYD40 upstream migration - hardware test only
+on:
+  push:
+    branches: ['sync/cyd40-hardware-test']
+    paths:
+      - '.github/workflows/cyd40-hardware-test.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: cyd40-hardware-test
+  cancel-in-progress: false
+jobs:
+  test-port:
+    if: github.repository == 'mjwgeek/SquachWatch-CYD-4.0' && github.ref == 'refs/heads/sync/cyd40-hardware-test'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconcile the reviewed upstream conflicts on staging only
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config merge.conflictStyle merge
+          BASE="$(git rev-parse HEAD)"
+          UPSTREAM=9e1217a9d3a64f7e22b22c1104e005dc97736840
+          git remote add upstream https://github.com/skizzophrenic/SquachWatch-CYD.git
+          git fetch --no-tags upstream master
+          git cat-file -e "$UPSTREAM^{commit}"
+          if ! git merge --no-ff --no-commit --no-edit "$UPSTREAM"; then
+            git rev-parse --verify MERGE_HEAD
+          fi
+          git restore --source="$BASE" --staged --worktree -- .github/workflows include/ota_pubkey.h
+          python tools/resolve_cyd40_migration.py
+          git add -A
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git diff --cached --check
+          git commit -m "Integrate pinned upstream for Hosyond hardware testing only"
+          git push origin HEAD:refs/heads/sync/cyd40-hardware-test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install platformio
+      - name: Compile both real CYD40 profiles
+        env:
+          SQW_VERSION: 2.0.14
+        run: pio run -e cyd40 -e cyd40-fast
+      - name: Check exact OTA slot layout and collect USB recovery images
+        run: |
+          python - <<'PY'
+          import struct, shutil
+          from pathlib import Path
+          expected={'nvs':(0x9000,0x5000),'otadata':(0xe000,0x2000),'app0':(0x10000,0x1e0000),'app1':(0x1f0000,0x1e0000)}
+          for env in ('cyd40','cyd40-fast'):
+              root=Path('.pio/build')/env
+              data=(root/'partitions.bin').read_bytes()
+              parts={}
+              for i in range(0,len(data)-31,32):
+                  magic,typ,sub,off,size,label,flags=struct.unpack_from('<HBBII16sI',data,i)
+                  if magic!=0x50aa: break
+                  parts[label.split(b'\0',1)[0].decode()]=(off,size)
+              assert all(parts.get(k)==v for k,v in expected.items()), (env,parts)
+              assert 0<(root/'firmware.bin').stat().st_size<=0x1e0000
+              dest=Path('candidate')/env
+              dest.mkdir(parents=True)
+              for name in ('firmware.bin','bootloader.bin','partitions.bin'):
+                  shutil.copy2(root/name,dest/name)
+              shutil.copy2(Path.home()/'.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin',dest/'boot_app0.bin')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyd40-hardware-test-only
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 30
