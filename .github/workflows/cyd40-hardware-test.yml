@@ -35,6 +35,9 @@ jobs:
           fi
           git restore --source="$BASE" --staged --worktree -- .github/workflows include/ota_pubkey.h
           python tools/resolve_cyd40_migration.py
+          # Upstream has a redundant blank line at EOF in this header.
+          # Normalize only the identified file; retain all other diff checks.
+          python -c "from pathlib import Path; p=Path('include/ui_rawscan.h'); p.write_bytes(p.read_bytes().rstrip(b'\r\n')+b'\n')"
           git add -A
           test -z "$(git diff --name-only --diff-filter=U)"
           git diff --cached --check
