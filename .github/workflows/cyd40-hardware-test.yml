@@ -53,12 +53,24 @@ jobs:
         env:
           SQW_VERSION: 2.0.14
         run: pio run -e cyd40 -e cyd40-fast
+      - name: Inspect actual linked flash usage (diagnostics only)
+        run: |
+          mkdir -p size-audit
+          python tools/cyd40_size_audit.py > size-audit/report.txt
+          cat size-audit/report.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyd40-size-audit
+          path: size-audit/
+          if-no-files-found: error
+          retention-days: 30
       - name: Check exact OTA slot layout and collect USB recovery images
         run: |
           python - <<'PY'
           import struct, shutil
           from pathlib import Path
           expected={'nvs':(0x9000,0x5000),'otadata':(0xe000,0x2000),'app0':(0x10000,0x1e0000),'app1':(0x1f0000,0x1e0000)}
+          failures=[]
           for env in ('cyd40','cyd40-fast'):
               root=Path('.pio/build')/env
               data=(root/'partitions.bin').read_bytes()
@@ -70,12 +82,15 @@ jobs:
               assert all(parts.get(k)==v for k,v in expected.items()), (env,parts)
               size=(root/'firmware.bin').stat().st_size
               print(f'{env}: binary={size:,} bytes, OTA slot={0x1e0000:,} bytes, remaining={0x1e0000-size:,}', flush=True)
-              assert 0<size<=0x1e0000, (env,size,0x1e0000)
+              if not 0<size<=0x1e0000:
+                  failures.append((env,size,0x1e0000))
+                  continue
               dest=Path('candidate')/env
               dest.mkdir(parents=True)
               for name in ('firmware.bin','bootloader.bin','partitions.bin'):
                   shutil.copy2(root/name,dest/name)
               shutil.copy2(Path.home()/'.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin',dest/'boot_app0.bin')
+          assert not failures, failures
           PY
       - uses: actions/upload-artifact@v4
         with:
