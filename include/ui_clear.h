@@ -151,3 +151,5 @@ void uiClearEmoteTick(uint32_t now);
 // Quick SND/MUT button beside the battery percentage.
 bool uiClearSoundHit(int x, int y);
 #endif
+// FONTS preview: draw a lit XP tile and return its width.
+int uiClearSampleTile(TFT_eSPI& t, int x, int y, const char* txt, uint16_t iconCol);

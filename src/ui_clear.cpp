@@ -3325,6 +3325,14 @@ static void drawXpTile(TFT_eSPI& t, int x, int y, int w, int h, const char* txt,
     t.setTextSize(1);
 }
 
+// The FONTS page's preview: one tile, lit, at the main screen's scale.
+int uiClearSampleTile(TFT_eSPI& t, int x, int y, const char* txt, uint16_t iconCol) {
+    const int k = Theme::xpTileScale();
+    const int w = ((int)strlen(txt) * XP_ADV + 10 + XP_ICON_W) * k;
+    drawXpTile(t, x, y, w, 12 * k, txt, iconCol, 0, 5 * k, k);
+    return w;
+}
+
 // CLASSIC's counters: one plain line of LABEL:COUNT pairs.
 static void drawCounterLine(TFT_eSPI& t, int w, int y, const DetectionEngine& eng,
                             const DetectionType* types, uint8_t n) {

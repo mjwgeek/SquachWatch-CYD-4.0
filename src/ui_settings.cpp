@@ -482,6 +482,7 @@ static const char* groupName(RowGroupId g) {
         case RowGroupId::WATCH:      return "LORA";    // the T-Deck has the watch's LoRa rows and nothing else of the watch's
 #else
         case RowGroupId::WATCH:      return "WATCH";
+#endif
         default:                     return "SYSTEM";
     }
 }
