@@ -113,6 +113,7 @@
 #include "blackbox.h"
 #include "gnss.h"
 #if defined(CYD_GPS)
+#include "ws_c5_gps.h"   // the 3.5"'s LC76G on I2C (CYD_GPS_I2C); empty elsewhere
 #include "sd_row.h"
 static void cydGpsStart();
 static void cydGpsTick(uint32_t now);
@@ -352,6 +353,7 @@ static void drawCrashCard(TFT_eSPI& t) {
 #include "clock.h"
 #include "ui_desk.h"
 #include "ui_zone.h"
+#include "december.h"
 #include "ui_wifinets.h"
 #include "ui_myalerts.h"
 #include "my_alerts.h"
@@ -874,6 +876,13 @@ static uint16_t CAP_NY_MIN = St77922Touch::NY_MIN, CAP_NY_MAX = St77922Touch::NY
 // five-target calibration still runs on first boot.
 static uint16_t CAP_NX_MIN = 0, CAP_NX_MAX = 239;
 static uint16_t CAP_NY_MIN = 0, CAP_NY_MAX = 319;
+#elif defined(WS_C5_35)
+// The FT6336 reports the panel's own 320x480 pixels (WsTouch::read() drops
+// anything outside them). Without this the 3.5" fell through to the 2.8"
+// ranges below, so a board that timed out of the first-boot calibration put
+// taps nowhere near the finger -- most of them on the rotate button.
+static uint16_t CAP_NX_MIN = 0, CAP_NX_MAX = TFT_WIDTH - 1;
+static uint16_t CAP_NY_MIN = 0, CAP_NY_MAX = TFT_HEIGHT - 1;
 #else
 static uint16_t CAP_NX_MIN = 32,  CAP_NX_MAX = 166;
 static uint16_t CAP_NY_MIN = 10,  CAP_NY_MAX = 308;
@@ -1759,6 +1768,13 @@ static uint8_t stickStopsBuild(StickPt* out, uint8_t cap) {
         int16_t xs[3], ys[3];
         uiZoneCardStops(w, h, xs, ys);
         for (int i = 0; i < 3; i++) add(xs[i], ys[i]);
+        return n;
+    }
+    if (state == AppState::CLEAR && December::cardWanted(millis())) {
+        // The HOLIDAY MODE card: TURN OFF and KEEP IT are the stops.
+        int16_t xs[2], ys[2];
+        December::cardStops(w, h, xs, ys);
+        for (int i = 0; i < 2; i++) add(xs[i], ys[i]);
         return n;
     }
     if (state == AppState::CLEAR && Settings::boringMode()) {
@@ -4837,15 +4853,20 @@ static void twatchPowerUp() {
 }
 #endif
 
-#if defined(FREENOVE_S3) || defined(CYD40)
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || defined(TDECK_PLUS) || defined(CYD40) || defined(E32R28T)
 // 1-cell LiPo through the board's 2:1 voltage divider.
 // Freenove S3: GPIO9. CYD40 E32R40T: BAT_ADC on GPIO34.
 // No fuel gauge, so voltage is measured directly and percentage is estimated.
-#if defined(CYD40)
+#if defined(CYD40) || defined(E32R28T)
 static const uint8_t BOARD_BATT_ADC = 34;
+#elif defined(FREENOVE_S3_35)
+static const uint8_t BOARD_BATT_ADC = 8;
+#elif defined(TDECK_PLUS)
+static const uint8_t BOARD_BATT_ADC = 4;
 #else
 static const uint8_t BOARD_BATT_ADC = 9;
 #endif
+#define BOARD_BAT_ADC BOARD_BATT_ADC
 static uint16_t boardBatteryMv() {
     uint32_t sum = 0;
     for (int i = 0; i < 8; i++) sum += analogReadMilliVolts(BOARD_BATT_ADC);
@@ -4930,6 +4951,20 @@ static void boardBatteryPrintLog() {
         const LampSample& r = s_lampLog[(s_lampLogAt + LAMP_LOG_N - s_lampLogN + i) % LAMP_LOG_N];
         Serial.printf("[batt] %lu %u %u %s\n", (unsigned long)r.sec, (unsigned)r.mv, (unsigned)r.pct, r.chg ? "CABLE" : "-");
     }
+}
+#endif
+
+#if defined(E32R28T)
+static bool e32r28tBattery(uint8_t& pct, bool& charging) {
+    uint32_t sumMv = 0;
+    for (int i = 0; i < 8; ++i)
+        sumMv += analogReadMilliVolts(BOARD_BAT_ADC);
+
+    const uint16_t batteryMv = (uint16_t)((sumMv / 8) * 2);
+
+    pct = boardBatteryPct(batteryMv);
+    charging = false;  // GPIO34 reports voltage, not charger status
+    return true;
 }
 #endif
 
@@ -6022,6 +6057,9 @@ void setup() {
 #if defined(TWATCH_S3)
     twatchPowerUp();
     uiClearSetBatterySource(twatchBatteryState);
+#endif
+#if defined(E32R28T)
+    uiClearSetBatterySource(e32r28tBattery);
 #endif
 #if defined(CYD35)
     // One-time diagnostic: is PSRAM actually present on this unit? The
@@ -7483,12 +7521,18 @@ static void cydGpsStart() {
     // buffer overflows in one slow frame and the lost bytes break sentences.
     CYD_GPS_SERIAL.setRxBufferSize(2048);
 #endif
+#if defined(CYD_GPS_I2C)
+    WsGps::begin();   // no UART: the LC76G on the touch bus, read from cydGpsTick()
+#else
     CYD_GPS_SERIAL.begin(s_cydGpsBaud, SERIAL_8N1, s_cydGpsPin, -1);
+#endif
     s_cydGpsBaudAt = millis();
     Wardrive::sdBegin();
 }
 static void cydGpsBaudTick(uint32_t now) {
-#if defined(CYD_GPS_RX_SEARCH)
+#if defined(CYD_GPS_I2C)
+    (void)now;   // no pin or speed to search on I2C
+#elif defined(CYD_GPS_RX_SEARCH)
     if (Gnss::good() || now - s_cydGpsBaudAt < 6000) return;
     const uint8_t pins = sizeof kGpsPins / sizeof kGpsPins[0];
     const uint8_t bauds = sizeof kGpsBauds / sizeof kGpsBauds[0];
@@ -7672,8 +7716,13 @@ static void cydGpsTick(uint32_t now) {
     else if (cmd == 3) {
         const Gnss::Sky k = Gnss::sky();
         const Gnss::Fix& f = Gnss::fix();
+#if defined(CYD_GPS_I2C)
+        Serial.printf("[gps] status: I2C 0x50, %lu reads, %lu with no answer; sentences %lu good, %lu bad; in view %u, heard %u, used %u; ",
+                      (unsigned long)WsGps::cycles(), (unsigned long)WsGps::fails(),
+#else
         Serial.printf("[gps] status: GPIO%d at %lu baud; sentences %lu good, %lu bad; in view %u, heard %u, used %u; ",
                       (int)s_cydGpsPin, (unsigned long)s_cydGpsBaud,
+#endif
                       (unsigned long)Gnss::good(), (unsigned long)Gnss::bad(), k.view, k.heard, f.used);
         {
             char raw[sizeof s_cydGpsRaw + 1];
@@ -7726,12 +7775,20 @@ static void cydGpsTick(uint32_t now) {
     // does not go stale while the console test runs.
     if (Gnss::faked()) Gnss::fake(Gnss::fix().lat7, Gnss::fix().lon7, Clock::isSet() ? Clock::nowEpoch() : 0, now);
 
+#if defined(CYD_GPS_I2C)
+    WsGps::tick([](char c, uint32_t at) {
+        s_cydGpsBytes++;
+        s_cydGpsRaw[s_cydGpsRawAt++ % sizeof s_cydGpsRaw] = c;
+        Gnss::feed(c, at);
+    }, now);
+#else
     while (CYD_GPS_SERIAL.available()) {
         const char c = (char)CYD_GPS_SERIAL.read();
         s_cydGpsBytes++;
         s_cydGpsRaw[s_cydGpsRawAt++ % sizeof s_cydGpsRaw] = c;
         Gnss::feed(c, now);
     }
+#endif
     cydGpsBaudTick(now);
     Wardrive::sdTick(now, engine.sd().ready());
 #if defined(CARDPUTER_ADV)
@@ -9417,6 +9474,18 @@ void loop() {
                         break;
                     }
                 }
+            } else if (December::cardWanted(now)) {
+                // December's first day on: HOLIDAY MODE, KEEP IT or TURN OFF,
+                // once a year (december.h). Taps beside it are the screen's.
+                December::cardDraw(*canvas, now);
+                if (touchJustDown && (now - lastTouch) > TOUCH_DEBOUNCE_MS) {
+                    const December::CardHit dh = December::cardHit(tp.x, tp.y, tft.width(), tft.height());
+                    if (dh != December::CardHit::NONE) {
+                        lastTouch = now;
+                        if (dh != December::CardHit::CARD) December::cardAnswer(dh == December::CardHit::KEEP);
+                        break;
+                    }
+                }
             }
 #if CROWD_BENCH
             // The crowd benchmark (a test build): its numbers or its table go
@@ -10892,6 +10961,7 @@ void loop() {
                         case SettingsRow::AURA:        Settings::toggleAura(); break;
                         case SettingsRow::DET_STYLE:   Settings::toggleDetXp(); break;
                         case SettingsRow::LAVA_LAMP:   Settings::toggleLavaLamp(); break;
+                        case SettingsRow::SEASONAL:    Settings::toggleSeasonal(); break;
                         // FONTS: the page, then a slider per kind of text. The
                         // rows and the preview box redraw at the new size
                         // straight away.

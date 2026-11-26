@@ -1,5 +1,6 @@
 // SquachWatch-CYD — wall-clock time. See clock.h.
 #include "clock.h"
+#include "december.h"
 #include "serial_flush.h"
 #include "security.h"   // a locked device takes no console commands
 #include "ota_wifi.h"    // the WIFI command lists the saved networks
@@ -139,6 +140,22 @@ static uint32_t    s_greeted  = 0;
 static uint32_t    s_mileSaid = 0;
 static bool        s_guess    = false;   // running from the note to self
 static uint32_t    s_lastNote = 0;       // millis() of the last note written
+static uint8_t     s_guessBoots = 0;     // cold boots from the note since the last real time ("gboots")
+#if defined(ARDUINO_ARCH_ESP32)
+// The guess outlives a restart the same way the time it guessed does. It did
+// not: the note's time stayed in the system clock across the next restart or
+// POWER OFF wake, and that boot, finding a clock already set, took it as a
+// real one -- the 3.5" ran ten and a half hours slow, trusted, after a flash
+// (2026-10-12). RTC RAM keeps the flag next to the time it describes.
+static const uint32_t GUESS_MAGIC = 0x6E55E550u;
+RTC_NOINIT_ATTR static uint32_t s_guessWord;
+#endif
+static void setGuess(bool g) {
+    s_guess = g;
+#if defined(ARDUINO_ARCH_ESP32)
+    s_guessWord = g ? GUESS_MAGIC : 0u;
+#endif
+}
 static const uint32_t NOTE_EVERY_MS = 10u * 60u * 1000u;
 
 #if !defined(ARDUINO_ARCH_ESP32)
@@ -188,6 +205,7 @@ bool isSet() {
 }
 bool trusted() { return isSet() && !s_guess; }
 bool guessed() { return isSet() && s_guess; }
+uint8_t guessBoots() { return s_guessBoots; }
 
 uint32_t nowEpoch() {
     const uint32_t t = rawNow();
@@ -223,7 +241,8 @@ bool setEpoch(uint32_t epoch) {
     if (epoch <= kPlausible) return false;
     // A real answer, from wherever: the guess is over, and the note is
     // brought up to date at once rather than ten minutes from now.
-    s_guess = false;
+    setGuess(false);
+    if (s_guessBoots && s_begun) { s_guessBoots = 0; s_prefs.putUChar("gboots", 0); }
     writeSystemClock(epoch);
     noteKnown();
     if (s_begun) { s_prefs.putUInt("last", epoch); s_lastNote = millis(); }
@@ -494,17 +513,29 @@ void begin() {
     s_born     = s_prefs.getUInt("born", 0);
     s_greeted  = s_prefs.getUInt("greet", 0);
     s_mileSaid = s_prefs.getUInt("mile", 0);
+    s_guessBoots = s_prefs.getUChar("gboots", 0);
     // Carried across a soft reset with the date already known: the first
     // such boot is still the first day.
-    if (isSet()) { noteKnown(); return; }
+    if (isSet()) {
+#if defined(ARDUINO_ARCH_ESP32)
+        if (s_guessWord == GUESS_MAGIC) {
+            s_guess = true;
+            Serial.println("[clock] still the note's guess from before the restart");
+            return;
+        }
+#endif
+        noteKnown();
+        return;
+    }
     // A cold boot: the note to self, if there is one, as a floor.
     const uint32_t last = s_prefs.getUInt("last", 0);
     if (last > kPlausible) {
         writeSystemClock(last);
-        s_guess = true;
+        setGuess(true);
+        if (s_guessBoots < 255) s_prefs.putUChar("gboots", ++s_guessBoots);
         char buf[40];
         formatClock(buf, sizeof buf);
-        Serial.printf("[clock] no clock; starting from the last note: %s\n", buf);
+        Serial.printf("[clock] no clock; starting from the last note: %s (power-on %u on a guess)\n", buf, (unsigned)s_guessBoots);
     }
 }
 
@@ -522,12 +553,10 @@ void pollSerial() {
     // A line buffer rather than a parser. Anything that is not the one
     // command is answered and dropped -- this is a debug port, and silence
     // in response to a typo is worse than a line of help.
-#if defined(TAB5) && defined(SENSE_CYD_APP)
-    static char line[112];   // WIFISAVE <32-byte name><TAB><64-byte password>
-#elif SQW_WIGLE_UPLOAD
+#if SQW_WIGLE_UPLOAD
     static char line[160];   // WIGLEKEY <WiGLE's Encoded for use value, up to about 120>
 #else
-    static char line[48];
+    static char line[128];   // WIFISAVE <name><TAB><password> on the Tab5; LORA CHAN MT <name> <32-byte base64 key>
 #endif
     static uint8_t len = 0;
 
@@ -885,6 +914,11 @@ void pollSerial() {
             // runPrimBench() in main.cpp. Runs on the next pass of loop().
             g_benchPrimNow = true;
             Serial.println("[prim] on the next frame");
+        } else if (strncasecmp(line, "XMAS", 4) == 0) {
+            // XMAS 0: the December look by the date (Dec 1-26); 1: always
+            // on; 2: always off. Until the next boot. See december.h.
+            December::setForce((uint8_t)atoi(line + 4));
+            Serial.printf("[xmas] %u (0 by date, 1 on, 2 off)\n", December::force());
         } else if (strncasecmp(line, "BG ", 3) == 0) {
             // BG N: show background N until the next boot, without saving it.
             // For timing them one after another off the [frame] line.

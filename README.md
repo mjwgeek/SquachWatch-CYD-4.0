@@ -1,5 +1,7 @@
 # SquachWatch-CYD 4.0 — Hosyond CYD40
 
+Upstream v1.51.0 integration: see [upstream release notes](.github/release-notes/v1.51.0.md). CYD40-specific hardware, Wi-Fi OTA and reduced-detail background rendering are retained.
+
 ## ⚡ Flash your Hosyond 4.0" CYD in Chrome
 
 ### **[➡️ OPEN THE CYD40 WEB FLASHER](https://mjwgeek.github.io/SquachWatch-CYD-4.0/)**
