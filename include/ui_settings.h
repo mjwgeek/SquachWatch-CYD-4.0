@@ -42,6 +42,7 @@ enum class SettingsRow : uint8_t {
     SQUACHY_NAME,   // opens the payphone; SquachMesh builds only
     SQUACHMESH,     // announce ourselves to other SquachWatches
     APPEARANCE,     // opens the APPEARANCE page: the display rows, and the hat
+    AURA,           // on the APPEARANCE page, once he is a Legend
     TOP_HAT,        // on the APPEARANCE page, once he is a Legend
     SYSTEM,         // opens the SYSTEM page: calibrate, colours, diagnostics, reset
     WATCH_TARGET,   // "WATCHING: <name>", only while a watch is set. Taps clear it.
@@ -84,7 +85,6 @@ enum class SettingsRow : uint8_t {
 #if defined(CROWPANEL7)
     BUZZER,          // the CrowPanel 7 only, the one board with a buzzer: OFF, or NEW ONLY
 #endif
-    BOARD_BATTERY,   // Freenove S3 / CYD40: cell voltage and estimated %, on SYSTEM
 #if defined(CYD40)
     SOUND_ALERTS,    // CYD40 speaker: audible detection chirps
     SOUND_VOLUME,    // CYD40 speaker volume
@@ -92,7 +92,7 @@ enum class SettingsRow : uint8_t {
 #if SQW_WIFI_5G
     WIFI_BANDS,      // a chip with 5 GHz only (the NM-CYD-C5): 2.4+5, or 2.4
 #endif
-    BOARD_BATTERY,   // Freenove S3s, Marauder V8 and T-Deck Plus only: known battery sensing, on SYSTEM
+    BOARD_BATTERY,   // CYD40 and upstream boards with known battery sensing, on SYSTEM
     CHARGE_MODE,     // the CYD boards: radios and screen off so a battery charges faster
     LAST_RUN,        // the CYD boards: how long the previous boot ran, on the SYSTEM page
     PRIVACY,         // PRIVACY MODE: addresses and names masked on screen, on the SYSTEM page

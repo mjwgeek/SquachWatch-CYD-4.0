@@ -401,6 +401,7 @@ static void drawCrashCard(TFT_eSPI& t) {
 #include "security.h"
 #include "ui_security.h"
 #include "squachy.h"
+#include "pet.h"
 #include "cap_touch.h"
 #if defined(TWATCH_S3) || defined(WS_C5_35)
 #define XPOWERS_CHIP_AXP2101
@@ -2996,20 +2997,9 @@ static constexpr uint8_t BOOT_BUTTON_PIN = 0;
 // A tap or the crown wakes it: SLPOUT needs 120 ms before DISPON, which is
 // the one delay a person can feel here, and it is once per wake.
 static bool s_panelAsleep = false;
-#if defined(TWATCH_S3)
-// A crown press with the screen on turns it off at once, cable or not.
-// It stays off until the next touch, crown press or alert: lastTouch
-// moving past this moment is what ends it.
-static bool     s_crownDark   = false;
-static uint32_t s_crownDarkAt = 0;
-// After an alert lights a crown-darkened screen, it stays lit until this
-// moment -- the screen timeout, counted from the alert's end -- then goes
-// dark again. 0 = no alert has lit it.
-static uint32_t s_crownLitUntil = 0;
 // On the cable, read every two seconds in twatchRadioTick(). The screen
 // stays lit while it is true: a watch on its charger is a desk clock.
 static bool     s_onUsb = true;
-#endif
 static bool s_radiosResting = false;   // the duty cycle's state; see twatchRadioTick()
 #endif
 #if SQW_POCKET
@@ -3272,7 +3262,6 @@ static void clearSharedFrameBuffer() {
 // modules needing to know about DetectionEngine's tracking API at all,
 // just how to draw/hit-test the panel they're given. Shared by both
 // screens since only one can ever be showing at a time.
-static bool    s_confirmPending = false;
 static uint8_t s_confirmMac[6];
 // Which DEVICE the MORE INFO page is about, not just which type: the label
 // and name off the log entry, which is what device_info.cpp matches on. The
@@ -3420,7 +3409,6 @@ static DetectionType s_confirmType = DetectionType::UNKNOWN;
 // which of the (at most) two pages is up: the one-time RSSI/confidence
 // primer first if it's never been shown (see Settings::infoPrimerShown()),
 // then s_confirmType's own explanation either way.
-static bool          s_infoPending       = false;
 static bool          s_infoShowingPrimer = false;
 // Same "ignore the touch that opened this" gate s_confirmArmed uses,
 // applied to the info panel's own GOT IT button.
@@ -4114,16 +4102,6 @@ static void enterInvite() {
 }
 
 // INVERT and ROT on the console -- see clock.cpp. Consumed in loop().
-volatile bool g_consoleAdc=false, g_consoleXyzzy=false, g_consoleClippy=false, g_consoleToaster=false;
-volatile bool g_consoleBall=false, g_consolePet=false, g_consoleJail=false, g_consoleFree=false;
-volatile uint8_t g_consoleHeadsUp=0;
-volatile bool g_consoleLegend=false, g_consoleOutfitSet=false, g_consoleAura=false;
-volatile int8_t g_consoleOutfit=-1;
-volatile bool g_consolePins=false, g_consoleI2c=false;
-volatile uint8_t g_consoleGps=0;
-volatile int32_t g_consoleFakeLat7=0, g_consoleFakeLon7=0;
-volatile bool g_consoleCharge=false;
-
 volatile bool g_consoleInvert = false;
 volatile bool g_consoleAdc = false;     // ADC: the spare analog inputs, for finding a battery sense line
 volatile bool g_consoleXyzzy = false;   // XYZZY: the TERMINAL background types the magic word now
@@ -4145,6 +4123,9 @@ volatile bool g_consoleI2c = false;     // I2C: a scan of the touch bus
 volatile bool g_consoleRotate = false;
 volatile bool g_consoleWatchTest = false; // WATCHTEST: watch the newest Bluetooth device, fire its alert
 volatile bool g_consoleRadioTest = false; // RADIO TEST: cycle even on the cable with the screen on (bench)
+volatile int8_t g_consoleSound = -1;      // SOUND n: play sound n on the speaker; 20/21 flip the amp pin (Freenove S3)
+volatile int8_t g_consoleLoraSet = -1;   // LORASET [DET|HOME]: LORA SETTINGS from the bench (the T-Deck)
+volatile bool g_consoleScreen  = false;   // SCREEN: say why the screen is dark, and light it (the BOOT-button boards)
 volatile bool g_consoleBatt    = false;   // BATT: one reading, now
 volatile bool g_consoleBattLog = false;   // BATTLOG: every sample kept, newest first
 volatile bool g_consoleHeal = false;  // RADIO HEAL: take the self-heal path now, as if deaf (watch)
@@ -4153,6 +4134,8 @@ volatile bool g_consoleMotion = false; // MOTION: the motion sensor's reading an
 volatile bool g_consoleBuzz = false;  // BUZZ: play the alert pattern now and report the driver (watch)
 volatile bool g_consoleRtc = false;   // RTC: read the clock chip (watch)
 volatile bool g_consolePmu = false;   // PMU: dump the power chip's registers (watch)
+volatile uint8_t g_consoleGps = 0;    // GPS, WARDRIVE and WIGLE commands: the S3 Plus's GNSS (watch)
+volatile int32_t g_consoleFakeLat7 = 0, g_consoleFakeLon7 = 0;   // GPS FAKE lat lon
 
 #ifdef BENCH_TOOLS
 // UPDATE NOW and UPDATE STOP on the console, for the bench: the unattended
@@ -5669,18 +5652,7 @@ static void twatchCrownTick(uint32_t now) {
     // buzzes, about 1.5 s) is surely over.
     if (s_drvAwakeAt && now - s_drvAwakeAt > 3000) { s_drvAwakeAt = 0; drvWrite(0x01, 0x40); }
     s_pmu.getIrqStatus();
-    if (s_pmu.isPekeyShortPressIrq()) {
-        if (!s_screenDimmed) {
-            s_crownDark = true;
-            s_crownDarkAt = now;
-            s_crownLitUntil = 0;
-            Serial.println("[crown] screen off");
-        } else {
-            s_crownDark = false;
-            lastTouch = now;
-            Serial.println("[crown] screen on");
-        }
-    }
+    if (s_pmu.isPekeyShortPressIrq()) pocketPress(now);
     s_pmu.clearIrqStatus();
 }
 #endif
@@ -8995,6 +8967,7 @@ void loop() {
     if (false && (tp.valid && !Settings::rotationLocked() && !Squachy::isHeld() &&
 #else
     if (g_consoleRotate || (tp.valid && !Settings::rotationLocked() && !Squachy::isHeld() &&
+#endif
         (state == AppState::CLEAR || state == AppState::LOG ||
                       state == AppState::SETTINGS || state == AppState::OUTFIT ||
                       state == AppState::RAWSCAN || state == AppState::DETECTION_FILTER ||
@@ -12363,29 +12336,20 @@ void loop() {
         // POCKET MODE, which beats the cable, the desk and a timeout of NEVER.
         // Only the button ends it (pocketPress); a touch never does.
         //
-        // An alert lights it without ending it: once the alert is over the
-        // screen goes dark again after the screen timeout (30 s when that is
-        // NEVER), the way it would on battery. Taps on the alert card -- the
-        // one that dismisses it above all -- do not count as the touch that
-        // ends crown mode; a touch after that does.
+        // Things that need to be seen borrow the screen without ending it:
+        // an alert card for as long as it is up on its own (ten seconds; a
+        // WATCH card, which waits for a tap, goes dark with the card still
+        // on it), a squad member's update offer or invite for its countdown,
+        // and the first-time note. Then it is dark again, no Squachy after.
         {
-            static bool wasAlerting = false;
-            if (s_crownDark) {
-                if (alerting || wasAlerting) s_crownDarkAt = now;
-                if (wasAlerting && !alerting) {
-                    uint32_t t = Settings::screenTimeoutSecRaw();
-                    if (!t) t = 30;
-                    s_crownLitUntil = now + t * 1000UL;
-                    if (!s_crownLitUntil) s_crownLitUntil = 1;
-                }
-                if ((int32_t)(lastTouch - s_crownDarkAt) > 0) s_crownDark = false;
-            }
-            wasAlerting = alerting;
-        }
-        if (s_crownDark) {
-            const bool alertWants = Settings::wakeOnAlert() && alerting;
-            const bool lit = s_crownLitUntil && (int32_t)(s_crownLitUntil - now) > 0;
-            wantDim = !alertWants && !lit;
+            const uint32_t shownAt = state == AppState::WATCH_ALERT ? watchAlertStart : alertStart;
+            const bool alertLit = alerting && Settings::wakeOnAlert() &&
+                                  (int32_t)(now - shownAt) < (int32_t)ALERT_AUTO_DISMISS_MS &&
+                                  (int32_t)(shownAt - s_crownPressAt) > 0;
+            const bool askLit  = state == AppState::NUDGE || state == AppState::INVITE;
+            const bool noteLit = s_pocketNoteUntil && (int32_t)(s_pocketNoteUntil - now) > 0;
+            if (!noteLit) s_pocketNoteUntil = 0;
+            if (s_crownDark) wantDim = !alertLit && !askLit && !noteLit;
         }
 #endif
         if (wantDim != s_screenDimmed) {
