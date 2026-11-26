@@ -1,15 +1,30 @@
 // SquachWatch-CYD — settings screen implementation
 #include "ui_settings.h"
+#include "gnss.h"
+#if !defined(ESP32)
+#include <stdlib.h>     // getenv: the emulator's SQUACHSIM_SPEAKER
+#endif
+#include "wardrive.h"
+#if SQUACH_LORA
+#include "ui_lorachat.h"
+#endif
 #include "ota_core.h"
 #include "ota_wifi.h"
 #include "theme.h"
 #include "settings.h"
 #include "security.h"
 #include "ignore_list.h"
+#include "my_alerts.h"
 #include "squachy.h"
 #include "bingo.h"
 #include "dex.h"
 #include "ui_dex.h"
+#include "ui_clear.h"   // uiClearSampleTile(), for the FONTS preview
+#include "alert_skin.h" // the ALERT CARD page's style names
+#include "pet.h"        // Pet::drawSampleBalloon(), the same
+#include "clock.h"      // LAST UPLOAD's date
+#include "wigle_up.h"   // the WARDRIVE page's upload rows
+#include "encounters.h" // the FIELD JOURNAL page
 #include <Arduino.h>
 
 // Was 16, which put the first row's top edge 4px ABOVE the bottom of the
@@ -23,7 +38,7 @@ static const int TOP_MARGIN = 32;
 
 // One scroll position per page, not one shared: see SettingsPage in the header.
 static SettingsPage s_page = SettingsPage::MAIN;
-static int g_scrollFor[5] = { 0, 0, 0, 0, 0 };
+static int g_scrollFor[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };   // one per SettingsPage
 #define g_scroll (g_scrollFor[(uint8_t)s_page])
 
 // BACK is pinned along the bottom now. Height of that strip, reserved out of
@@ -68,7 +83,12 @@ static const SettingsRow ALL_ROWS[] = {
     // to ten rows, so the main list carries one row that opens it.
     SettingsRow::WATCH_SETTINGS,
 #endif
-    SettingsRow::BORING_MODE, SettingsRow::CONFIDENCE, SettingsRow::AUTO_QUIET,
+#if defined(STICKS3)
+    // TERMINAL MODE has its own button everywhere else (MODE, bottom right);
+    // the StickS3's is FOB, so its way in stays here.
+    SettingsRow::BORING_MODE,
+#endif
+    SettingsRow::CONFIDENCE, SettingsRow::AUTO_QUIET,
 #if defined(CROWPANEL7)
     // Beside ALERT FILTER and AUTO SNOOZE because it is about alerts: one
     // switch, not a page of knobs like the light. Compiled only for the
@@ -76,11 +96,27 @@ static const SettingsRow ALL_ROWS[] = {
     SettingsRow::BUZZER,
 #endif
     SettingsRow::DETECTION_FILTER,
+    // The owner's own WiFi names, between what the board filters out and
+    // what it has been told to ignore.
+    SettingsRow::MY_ALERTS,
     SettingsRow::IGNORED_DEVICES,
+#if defined(SENSE_CYD_APP)
+    // Beside what the detector listens for: what the board's radio senses
+    // (the detector paused while HUMAN SENSING is up).
+    SettingsRow::SENSING,
+#endif
+#if defined(CARDPUTER_ADV)
+    SettingsRow::EXT_SCREEN,
+#endif
     // APPEARANCE opens the display page -- see APPEARANCE_ROWS. It sat at the
     // very top of this list, which put it under the first thumb that opened
     // the screen and got pressed by accident. Down here with SQUACHMESH it is
     // beside the other row that opens a page rather than changing a value.
+#if defined(SQW_SMALL)
+    // The small boards keep PET out here, not a page down: it is the one
+    // switch for the companion, which is OFF until someone picks one.
+    SettingsRow::PET,
+#endif
     SettingsRow::APPEARANCE,
 #if SQUACH_MESH
     // One row, not two: NAME moved inside the SquachMesh menu, which is a
@@ -92,9 +128,23 @@ static const SettingsRow ALL_ROWS[] = {
     // -- see APPEARANCE_ROWS. Everything about how he LOOKS is on one page;
     // what stays here is what he DOES.
     SettingsRow::REPLAY_INTRO, SettingsRow::SHOW_OFF, SettingsRow::VIEW_DIARY,
-    SettingsRow::BINGO, SettingsRow::DEX, SettingsRow::DESK_MODE,
+    SettingsRow::BINGO, SettingsRow::DEX, SettingsRow::CRYPTID_GUIDE,
+#if SQUACH_MESH
+    SettingsRow::JOURNAL,   // random encounters: who has turned up, and how often they roll
+#endif
+#if !defined(STICKS3)   // the StickS3 has FOB MODE on the main screen in its place
+    SettingsRow::DESK_MODE,
+#endif
     SettingsRow::POWER_SAVER,
+#if defined(CYD_GPS)
+    SettingsRow::WARDRIVE_PAGE,    // WARDRIVE and what it is doing; opens the WARDRIVE page
+#endif
+#if defined(ESP32) && !defined(TWATCH_S3)
+    SettingsRow::CHARGE_MODE,
+#endif
+#if !defined(STICKS3)   // a fob that keeps no log has nothing to lock, and a PIN on two buttons is misery
     SettingsRow::SECURITY,
+#endif
     // CALIBRATE, CHECK COLORS, DIAGNOSTICS and RESET STATS moved behind the
     // SYSTEM row -- see SYSTEM_ROWS. They are the four you touch once a year,
     // and they were sitting below everything you actually adjust.
@@ -111,20 +161,103 @@ static const SettingsRow APPEARANCE_ROWS[] = {
     // How HE looks comes first -- these are the rows people open this page to
     // change, and they were a scroll away on the main list. TOP HAT only
     // appears once it has been earned; see buildDisplayList().
-    SettingsRow::SQUACHY_SIZE, SettingsRow::OUTFIT, SettingsRow::PET,
-    SettingsRow::SHADES_COLOR, SettingsRow::BANTER, SettingsRow::TOP_HAT,
+    SettingsRow::SQUACHY_SIZE, SettingsRow::OUTFIT,
+#if !defined(SQW_SMALL)   // on the main list there, where it can be found
+    SettingsRow::PET,
+#endif
+    SettingsRow::SHADES_COLOR, SettingsRow::BANTER, SettingsRow::AURA,
+#if SQUACH_MESH
+    // Who turns up on his screen: the dice, here as well as on the FIELD
+    // JOURNAL page, because this is where people look to switch them off.
+    SettingsRow::ENCOUNTERS,
+#endif
     // Then how the SCREEN looks.
-    SettingsRow::THEME, SettingsRow::BACKGROUND, SettingsRow::BACKGROUND_LOCK, SettingsRow::BRIGHTNESS,
+    SettingsRow::THEME, SettingsRow::BACKGROUND, SettingsRow::BACKGROUND_LOCK, SettingsRow::DET_STYLE,
+    SettingsRow::LAVA_LAMP, SettingsRow::BRIGHTNESS,
     SettingsRow::INVERT, SettingsRow::RGB_SWAP, SettingsRow::ROTATION_LOCK,
     // And the one light that is not on the screen at all.
     SettingsRow::STATUS_LIGHT,
+    // How big the words are, on a page of its own.
+    SettingsRow::FONTS,
+#if !defined(SQW_SMALL) && !defined(TWATCH_S3)
+    // The alert card's window: a page of its own. Not on the boards whose
+    // screens are too small for a window -- they always draw TRAIL.
+    SettingsRow::ALERT_CARD,
+#endif
 };
+
+// The ALERT CARD page: which window (STYLE opens a live card to step through
+// them, the way OUTFIT does), whether it opens with its animation, and
+// whether the sunset is behind it.
+static const SettingsRow ALERT_ROWS[] = {
+    SettingsRow::ALERT_STYLE, SettingsRow::ALERT_MOTION, SettingsRow::ALERT_DESK,
+};
+static const uint8_t ALERT_ROWS_N = sizeof(ALERT_ROWS) / sizeof(ALERT_ROWS[0]);
+
+#if SQUACH_MESH
+// The FIELD JOURNAL page: how often the dice roll, then every kind of
+// encounter -- a name once met, "???" until then.
+static const SettingsRow JOURNAL_ROWS[] = {
+    SettingsRow::ENCOUNTERS,
+    SettingsRow::FREE_ROLL,
+    SettingsRow::JOURNAL_0, SettingsRow::JOURNAL_1, SettingsRow::JOURNAL_2, SettingsRow::JOURNAL_3, SettingsRow::JOURNAL_4,
+    SettingsRow::JOURNAL_5, SettingsRow::JOURNAL_6, SettingsRow::JOURNAL_7, SettingsRow::JOURNAL_8,
+    SettingsRow::JOURNAL_9,
+};
+static const uint8_t JOURNAL_ROWS_N = sizeof(JOURNAL_ROWS) / sizeof(JOURNAL_ROWS[0]);
+#endif
+
+#if defined(CYD_GPS) || defined(TWATCH_S3)
+// The WARDRIVE page: the switch, what it is doing, and where the log goes --
+// to WiGLE over the WiFi on the boards with room for it, through
+// squachwatch.com on the rest.
+static const SettingsRow WD_ROWS[] = {
+    SettingsRow::WATCH_WARDRIVE, SettingsRow::WD_GPS, SettingsRow::WD_COUNT, SettingsRow::WD_KEPT,
+#if defined(CARDPUTER_ADV) && defined(CYD_GPS)
+    SettingsRow::WARDRIVE_SOUND,
+#endif
+#if SQW_WIGLE_UPLOAD
+    SettingsRow::WD_UPLOAD, SettingsRow::WD_AUTO, SettingsRow::WD_KEY, SettingsRow::WD_LAST,
+#else
+    SettingsRow::WD_WEB,
+#endif
+};
+static const uint8_t WD_ROWS_N = sizeof(WD_ROWS) / sizeof(WD_ROWS[0]);
+#endif
+
+// The FONTS page: one row per kind of text. A kind this board can show at
+// only one size is left off (see buildDisplayList()).
+static const SettingsRow FONT_ROWS[] = {
+    SettingsRow::FONT_MENUS, SettingsRow::FONT_TEXT, SettingsRow::FONT_BUTTONS, SettingsRow::FONT_BUBBLES,
+    SettingsRow::FONT_PETS, SettingsRow::FONT_XP,
+};
+static const uint8_t FONT_ROWS_N = sizeof(FONT_ROWS) / sizeof(FONT_ROWS[0]);
+static bool isFontRow(SettingsRow r) {
+    return r == SettingsRow::FONT_MENUS || r == SettingsRow::FONT_TEXT ||
+           r == SettingsRow::FONT_BUTTONS || r == SettingsRow::FONT_BUBBLES || r == SettingsRow::FONT_XP || r == SettingsRow::FONT_PETS;
+}
+// Which kind the preview shows: the one moved last.
+static Settings::FontKind s_previewKind = Settings::FontKind::MENUS;
+static Settings::FontKind fontKindFor(SettingsRow r) {
+    switch (r) {
+        case SettingsRow::FONT_TEXT:    return Settings::FontKind::TEXT;
+        case SettingsRow::FONT_BUTTONS: return Settings::FontKind::BUTTONS;
+        case SettingsRow::FONT_BUBBLES: return Settings::FontKind::BUBBLES;
+        case SettingsRow::FONT_XP:      return Settings::FontKind::XP_TILES;
+        case SettingsRow::FONT_PETS:    return Settings::FontKind::PETS;
+        default:                        return Settings::FontKind::MENUS;
+    }
+}
 
 #if defined(TWATCH_S3)
 // The WATCH SETTINGS page: the battery first (a reading), then the knobs that
 // decide how long it lasts, then the buzz, then the tools.
 static const SettingsRow WATCH_ROWS[] = {
-    SettingsRow::WATCH_BATTERY, SettingsRow::WATCH_RADIO, SettingsRow::WATCH_LISTEN,
+    SettingsRow::WATCH_BATTERY, SettingsRow::WARDRIVE_PAGE, SettingsRow::WATCH_QUIET_TAGS,
+#if SQUACH_LORA
+    SettingsRow::WATCH_LORA_CHATS, SettingsRow::WATCH_LORA,
+#endif
+    SettingsRow::WATCH_RADIO, SettingsRow::WATCH_LISTEN,
     SettingsRow::WATCH_IDLE_CPU, SettingsRow::WATCH_BUZZ,
     SettingsRow::WATCH_RADIO_RESET, SettingsRow::WATCH_STEADY, SettingsRow::WATCH_TEMP,
     SettingsRow::WATCH_XTAL,
@@ -134,30 +267,37 @@ static const uint8_t WATCH_ROWS_N = sizeof(WATCH_ROWS) / sizeof(WATCH_ROWS[0]);
 
 // The SYSTEM page: the rarely-needed machinery, off the main list.
 static const SettingsRow SYSTEM_ROWS[] = {
-#if defined(FREENOVE_S3) || defined(CYD40)
+    SettingsRow::PRIVACY,
+#if defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || defined(MARAUDER_V8) || defined(TDECK_PLUS) || defined(WS_C5_35) || defined(CYD40)
     SettingsRow::BOARD_BATTERY,
 #if defined(CYD40)
     SettingsRow::SOUND_ALERTS,
     SettingsRow::SOUND_VOLUME,
 #endif
 #endif
-    SettingsRow::CALIBRATE, SettingsRow::CHECK_COLORS,
+#if !defined(SQW_SMALL)   // no touch panel to calibrate on the StickS3 or the Cardputer
+    SettingsRow::CALIBRATE,
+#endif
+    SettingsRow::CHECK_COLORS,
     SettingsRow::DIAGNOSTICS, SettingsRow::UPDATE_FIRMWARE,
 #if !defined(CYD40)
-    // Hosyond does not contact the update server at boot. Do not offer an
-    // AT BOOT switch that cannot and must not be enabled on this board.
     SettingsRow::UPDATE_CHECK,
 #endif
+#if !defined(STICKS3)   // no WiFi password on two buttons: the StickS3 updates over Bluetooth
     SettingsRow::WIFI_NETWORKS,
+#endif
     SettingsRow::RESET_STATS,
 };
 static const uint8_t SYSTEM_ROWS_N = sizeof(SYSTEM_ROWS) / sizeof(SYSTEM_ROWS[0]);
 
-// The DESK MODE page: everything about the desk in one place, so it can grow.
-// The way in comes first; then how it looks; then who is on it.
+// The DESK SETTINGS page: everything about the desk in one place, so it can
+// grow. How it looks first; then who is on it. (Its OPEN row went when the
+// main screen's MODE button became the way in.)
 static const SettingsRow DESK_ROWS[] = {
-    SettingsRow::DESK_OPEN, SettingsRow::DESK_BACKGROUND,
+    SettingsRow::DESK_BACKGROUND,
     SettingsRow::CLOCK_FONT, SettingsRow::CLOCK_SIZE, SettingsRow::CLOCK_BACKDROP,
+    SettingsRow::CLOCK_FORMAT,
+    SettingsRow::DESK_ALERT,
     SettingsRow::TIME_ZONE,
 #if SQUACH_MESH
     SettingsRow::DESK_SQUAD, SettingsRow::DESK_CROWD, SettingsRow::DESK_VISIT,
@@ -200,7 +340,7 @@ static bool isSquachyOnlyRow(SettingsRow r) {
            r == SettingsRow::PET || r == SettingsRow::TOP_HAT;
 }
 
-enum class RowGroupId : uint8_t { APPEARANCE, BEHAVIOR, SQUACHY, SYSTEM, DESK, SQUAD, WATCH };
+enum class RowGroupId : uint8_t { APPEARANCE, BEHAVIOR, SQUACHY, SYSTEM, DESK, SQUAD, WATCH, FONTS, ALERTS, WARDRIVE, JOURNAL };
 
 static RowGroupId groupFor(SettingsRow r) {
     // Appearance sits with the Squachy rows because that is where it was asked
@@ -210,6 +350,29 @@ static RowGroupId groupFor(SettingsRow r) {
     // a leftover. It goes to SYSTEM there -- still reachable, which is the
     // part that matters, since the display rows live behind it.
     if (r == SettingsRow::APPEARANCE && Settings::boringMode()) return RowGroupId::SYSTEM;
+#if defined(CYD_GPS)
+    // Under its neighbor's heading: a CYD has no WATCH heading.
+    if (r == SettingsRow::WARDRIVE_PAGE) return groupFor(SettingsRow::POWER_SAVER);
+#endif
+    switch (r) {
+        case SettingsRow::WATCH_WARDRIVE: case SettingsRow::WD_GPS: case SettingsRow::WD_COUNT:
+        case SettingsRow::WD_KEPT: case SettingsRow::WD_UPLOAD: case SettingsRow::WD_AUTO:
+        case SettingsRow::WD_KEY: case SettingsRow::WD_LAST: case SettingsRow::WD_WEB:
+#if defined(CARDPUTER_ADV)
+        case SettingsRow::WARDRIVE_SOUND:
+#endif
+            if (s_page == SettingsPage::WARDRIVE) return RowGroupId::WARDRIVE;
+            break;
+        case SettingsRow::ENCOUNTERS:
+            return s_page == SettingsPage::JOURNAL ? RowGroupId::JOURNAL : RowGroupId::APPEARANCE;
+        case SettingsRow::FREE_ROLL:
+            return RowGroupId::JOURNAL;
+        case SettingsRow::JOURNAL:
+            return groupFor(SettingsRow::DEX);
+        default:
+            if (r >= SettingsRow::JOURNAL_0 && r <= SettingsRow::JOURNAL_9) return RowGroupId::JOURNAL;
+            break;
+    }
     switch (r) {
         case SettingsRow::WATCH_BATTERY:
         case SettingsRow::WATCH_RADIO:
@@ -220,7 +383,11 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::WATCH_RADIO_RESET:
         case SettingsRow::WATCH_STEADY:
         case SettingsRow::WATCH_TEMP:
-        case SettingsRow::WATCH_XTAL:
+        case SettingsRow::WARDRIVE_PAGE:
+        case SettingsRow::WATCH_LORA:
+        case SettingsRow::WATCH_LORA_CHATS:
+        case SettingsRow::LORA_TX:
+        case SettingsRow::WATCH_QUIET_TAGS:
             return RowGroupId::WATCH;
         // TIME ZONE sat on the SYSTEM page too, the same setting twice. Only
         // the clock reads it, so it lives with the clock.
@@ -230,6 +397,8 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::CLOCK_FONT:
         case SettingsRow::CLOCK_SIZE:
         case SettingsRow::CLOCK_BACKDROP:
+        case SettingsRow::CLOCK_FORMAT:
+        case SettingsRow::DESK_ALERT:
             return RowGroupId::DESK;
         case SettingsRow::DESK_SQUAD:
         case SettingsRow::DESK_CROWD:
@@ -252,7 +421,23 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::OUTFIT:
         case SettingsRow::PET:
         case SettingsRow::BANTER:
+        case SettingsRow::DET_STYLE:
+        case SettingsRow::LAVA_LAMP:
+        case SettingsRow::FONTS:
+        case SettingsRow::ALERT_CARD:
             return RowGroupId::APPEARANCE;
+        case SettingsRow::ALERT_STYLE:
+        case SettingsRow::ALERT_MOTION:
+        case SettingsRow::ALERT_DESK:
+            return RowGroupId::ALERTS;
+        case SettingsRow::FONT_MENUS:
+        case SettingsRow::FONT_TEXT:
+        case SettingsRow::FONT_BUTTONS:
+        case SettingsRow::FONT_BUBBLES:
+        case SettingsRow::FONT_XP:
+        case SettingsRow::FONT_PETS:
+        case SettingsRow::FONT_PREVIEW:
+            return RowGroupId::FONTS;
         case SettingsRow::BORING_MODE:
         case SettingsRow::CONFIDENCE:
         case SettingsRow::AUTO_QUIET:
@@ -260,7 +445,11 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::BUZZER:
 #endif
         case SettingsRow::DETECTION_FILTER:
+        case SettingsRow::MY_ALERTS:
         case SettingsRow::IGNORED_DEVICES:
+#if defined(SENSE_CYD_APP)
+        case SettingsRow::SENSING:
+#endif
             return RowGroupId::BEHAVIOR;
         case SettingsRow::SQUACHY_NAME:
         case SettingsRow::APPEARANCE:
@@ -269,6 +458,7 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::VIEW_DIARY:
         case SettingsRow::BINGO:
         case SettingsRow::DEX:
+        case SettingsRow::CRYPTID_GUIDE:
         case SettingsRow::DESK_MODE:
         case SettingsRow::SHOW_OFF:
             return RowGroupId::SQUACHY;
@@ -284,6 +474,13 @@ static const char* groupName(RowGroupId g) {
         case RowGroupId::SQUACHY:    return "SQUACHY";
         case RowGroupId::DESK:       return "DESK";
         case RowGroupId::SQUAD:      return "SQUAD";
+        case RowGroupId::FONTS:      return "TEXT SIZE";
+        case RowGroupId::ALERTS:     return "ALERT CARD";
+        case RowGroupId::WARDRIVE:   return "WARDRIVE";
+        case RowGroupId::JOURNAL:    return "FIELD JOURNAL";
+#if defined(TDECK_PLUS)
+        case RowGroupId::WATCH:      return "LORA";    // the T-Deck has the watch's LoRa rows and nothing else of the watch's
+#else
         case RowGroupId::WATCH:      return "WATCH";
         default:                     return "SYSTEM";
     }
@@ -299,6 +496,10 @@ static uint16_t groupColor(RowGroupId g) {
         case RowGroupId::SQUACHY:    return Theme::VAPOR_PINK;
         case RowGroupId::DESK:       return Theme::CYAN;
         case RowGroupId::SQUAD:      return Theme::GREEN;
+        case RowGroupId::FONTS:      return Theme::CYAN;
+        case RowGroupId::ALERTS:     return Theme::PINK;
+        case RowGroupId::WARDRIVE:   return Theme::GREEN;
+        case RowGroupId::JOURNAL:    return Theme::AMBER;
         case RowGroupId::WATCH:      return Theme::AMBER;
         default:                     return Theme::VAPOR_PURPLE;
     }
@@ -323,6 +524,14 @@ static uint8_t buildDisplayList(DisplayItem* out) {
     if (s_page == SettingsPage::APPEARANCE) { src = APPEARANCE_ROWS; srcN = APPEARANCE_ROWS_N; }
     else if (s_page == SettingsPage::SYSTEM) { src = SYSTEM_ROWS;    srcN = SYSTEM_ROWS_N; }
     else if (s_page == SettingsPage::DESK)   { src = DESK_ROWS;      srcN = DESK_ROWS_N; }
+    else if (s_page == SettingsPage::FONTS)  { src = FONT_ROWS;      srcN = FONT_ROWS_N; }
+    else if (s_page == SettingsPage::ALERT_CARD) { src = ALERT_ROWS; srcN = ALERT_ROWS_N; }
+#if defined(CYD_GPS) || defined(TWATCH_S3)
+    else if (s_page == SettingsPage::WARDRIVE) { src = WD_ROWS; srcN = WD_ROWS_N; }
+#endif
+#if SQUACH_MESH
+    else if (s_page == SettingsPage::JOURNAL) { src = JOURNAL_ROWS; srcN = JOURNAL_ROWS_N; }
+#endif
 #if defined(TWATCH_S3)
     else if (s_page == SettingsPage::WATCH)  { src = WATCH_ROWS;     srcN = WATCH_ROWS_N; }
 #endif
@@ -338,10 +547,12 @@ static uint8_t buildDisplayList(DisplayItem* out) {
         // isSquachyOnlyRow(). They stay in the list; drawing handles the rest.
         // PET and TOP HAT are hidden by not being EARNED rather than by a
         // mode. Showing a permanently-off row for something you have never
-        // seen would give the secret away -- and a switch for a hat he is
-        // not wearing yet would be a switch that does nothing.
-        if (r == SettingsRow::PET && !Squachy::petUnlocked()) continue;
-        if (r == SettingsRow::TOP_HAT && !Squachy::hasAura()) continue;
+        // seen would give the secret away -- and a switch for an aura he
+        // does not have yet would be a switch that does nothing.
+        if (r == SettingsRow::PET && !Squachy::anyPetUnlocked()) continue;
+        if (r == SettingsRow::AURA && !Squachy::hasAura()) continue;
+        // No battery to show, no lamp to switch.
+        if (r == SettingsRow::LAVA_LAMP && !uiClearHasBattery()) continue;
         // Not a secret, just impossible: a board without a second app slot or
         // a Bluetooth server has nothing to update into.
         if ((r == SettingsRow::UPDATE_FIRMWARE || r == SettingsRow::UPDATE_CHECK) && !OtaCore::available()) continue;
@@ -434,6 +645,186 @@ static int maxScroll(const DisplayItem* items, uint8_t n,
     return s;
 }
 
+// ---- the FONTS page ----------------------------------------------------------
+static void rowPanel(TFT_eSPI& t, int w, int y, int hgt);   // below, with the other rows
+// The preview: a box with a sample of the kind moved last, drawn by the same
+// code that draws the real thing, so what it shows is what the screens get.
+#if defined(SQW_SMALL)
+static const char* const PREVIEW_TEXT = "Squachy spotted a tracker tagging along. Pick a row to see where it went.";
+#else
+static const char* const PREVIEW_TEXT = "Squachy spotted a tracker tagging along. Tap a row to see where it went.";
+#endif
+static const char* const PREVIEW_SAY  = "Like this?";
+static const char* const PREVIEW_PET  = "Me next!";
+static const int PREVIEW_CAP = 12;    // the "PREVIEW" caption's rows
+static int previewButtonH() { return Theme::dialogBtnH(24); }
+static int previewHeight(TFT_eSPI& t, int w) {
+    int sample = 0;
+    switch (s_previewKind) {
+        case Settings::FontKind::MENUS:
+            Theme::menuFontOn(t, t.height() > t.width());
+            sample = t.fontHeight() + Theme::listRowPad();
+            break;
+        case Settings::FontKind::TEXT: {
+            Theme::bodyFontOn(t);
+            char lines[4][48];
+            const uint8_t n = Theme::wrapText(t, PREVIEW_TEXT, w - 34, lines, 4);
+            sample = n * (t.fontHeight() + 2);
+            break;
+        }
+        case Settings::FontKind::BUTTONS:  sample = previewButtonH(); break;
+        case Settings::FontKind::XP_TILES: sample = 12 * Theme::xpTileScale() + 4; break;
+        case Settings::FontKind::PETS: {
+            Theme::petFontOn(t);
+            const int fh = t.fontHeight();
+            sample = (fh > 8 ? fh - 1 : 9) + 6 + 4 + 4;   // a line, its margins, the tail and a gap
+            break;
+        }
+        default:                           sample = Squachy::bubbleHeight(t, PREVIEW_SAY); break;
+    }
+    t.setTextFont(1);
+    t.setTextSize(1);
+    return PREVIEW_CAP + sample + 10;
+}
+static void drawFontPreview(TFT_eSPI& t, int w, int y, int hgt) {
+    const int x0 = 3, ww = w - 10;
+    t.fillRect(0, y - 2, w, hgt + 2, Theme::BG);   // its own strip, below the list's backdrop
+    t.fillRect(x0, y + 1, ww, hgt - 4, Theme::BG);
+    t.drawRect(x0, y + 1, ww, hgt - 4, Theme::CYAN);
+    t.setTextFont(1);
+    t.setTextSize(1);
+    t.setTextColor(Theme::CYAN, Theme::BG);
+    t.setCursor(x0 + 5, y + 4);
+    static const char* const KIND[6] = { "MENUS", "TEXT", "BUTTONS", "BUBBLES", "XP TILES", "PETS" };
+    int8_t lo, hi;
+    Theme::fontRange(t, s_previewKind, lo, hi);
+    int8_t cur = Theme::fontDelta(s_previewKind);
+    if (cur < lo) cur = lo;
+    if (cur > hi) cur = hi;
+    char cap[40];
+    if (Theme::fontHasFace(s_previewKind))
+        snprintf(cap, sizeof cap, "PREVIEW  %s: %s, %s", KIND[(int)s_previewKind], Theme::fontStepName(cur),
+                 Theme::fontSmooth(s_previewKind) ? "SMOOTH" : "PIXEL");
+    else
+        snprintf(cap, sizeof cap, "PREVIEW  %s: %s", KIND[(int)s_previewKind], Theme::fontStepName(cur));
+    t.print(cap);
+    const int sy = y + 1 + PREVIEW_CAP;
+    switch (s_previewKind) {
+        case Settings::FontKind::MENUS: {
+            // One of this screen's own rows.
+            const int rh = hgt - PREVIEW_CAP - 10;
+            Theme::drawListRowPanel(t, ww - 2, sy, rh);
+            Theme::menuFontOn(t, t.height() > t.width());
+            while (t.textWidth("ALERT FILTER") + t.textWidth("ALL") + 8 > ww - 34 && Theme::menuFontSmaller(t)) {}
+            t.setTextColor(Theme::AMBER, Theme::BG);
+            t.setCursor(x0 + 8, sy + (rh - t.fontHeight()) / 2);
+            t.print("ALERT FILTER");
+            t.setTextColor(Theme::WHITE, Theme::BG);
+            t.setCursor(x0 + ww - 18 - t.textWidth("ALL"), sy + (rh - t.fontHeight()) / 2);
+            t.print("ALL");
+            break;
+        }
+        case Settings::FontKind::TEXT: {
+            Theme::bodyFontOn(t);
+            char lines[4][48];
+            const uint8_t n = Theme::wrapText(t, PREVIEW_TEXT, w - 34, lines, 4);
+            t.setTextColor(Theme::WHITE, Theme::BG);
+            for (uint8_t i = 0; i < n; i++) {
+                t.setCursor(x0 + 10, sy + 2 + i * (t.fontHeight() + 2));
+                t.print(lines[i]);
+            }
+            break;
+        }
+        case Settings::FontKind::BUTTONS: {
+            // A screen's own button and a window's, side by side.
+            const int bh = previewButtonH(), gap = 8;
+            const int bw = (ww - 16 - gap) / 2;
+            Theme::drawButton(t, x0 + 8, sy + 2, bw, bh, "[ GOT IT ]", false);
+            Theme::drawWin95Button(t, x0 + 8 + bw + gap, sy + 2, bw, bh, "YES", false);
+            break;
+        }
+        case Settings::FontKind::PETS:
+            // A pet's balloon, its tail on a pet-sized box just under it.
+            Pet::drawSampleBalloon(t, x0 + ww / 2 - 11, y + hgt - 8, 22, PREVIEW_PET);
+            break;
+        case Settings::FontKind::XP_TILES: {
+            // Two of the main screen's own counter tiles.
+            int tx = x0 + 8;
+            tx += uiClearSampleTile(t, tx, sy + 2, "FLOCK 2", Theme::colorFor(DetectionType::FLOCK)) + 4 * Theme::xpTileScale();
+            uiClearSampleTile(t, tx, sy + 2, "RING 5", Theme::colorFor(DetectionType::RING));
+            break;
+        }
+        default:
+            Squachy::drawSampleBubble(t, x0 + ww / 2, sy + 2, PREVIEW_SAY);
+            break;
+    }
+    t.setTextFont(1);
+    t.setTextSize(1);
+}
+
+// A slider row, one line: the label, then - [track] +. The stops are the
+// sizes this board has for the kind; the one it was built with is marked
+// taller. The label is in the face the row had at the built size, so nothing
+// on these rows moves while you slide them. Shared by the draw and the tap.
+struct SliderGeom { int bh, bw, by, minusX, plusX, x0, x1; };
+// MENUS, BUTTONS and BUBBLES also have a face: their label is a box, drawn
+// in the face the kind is set to, and a tap on it swaps PIXEL and SMOOTH.
+static void sliderLabelFace(TFT_eSPI& t) { t.setTextFont(Theme::large() ? 2 : 1); t.setTextSize(1); }
+static SliderGeom sliderGeom(TFT_eSPI& t, int w, int y, int hgt) {
+    SliderGeom g;
+    sliderLabelFace(t);
+    int labelW = t.textWidth("XP TILES");
+    t.setTextFont(2);
+    if (t.textWidth("BUBBLES") > labelW) labelW = t.textWidth("BUBBLES");
+    labelW += 14;
+    t.setTextFont(1);
+    g.bh = hgt - 8;
+    if (g.bh < 10) g.bh = 10;
+    g.bw = g.bh + 6;
+    g.by = y + (hgt - g.bh) / 2;
+    g.minusX = 8 + labelW;
+    g.plusX  = w - 18 - g.bw;
+    g.x0 = g.minusX + g.bw + 8;
+    g.x1 = g.plusX - 8;
+    return g;
+}
+static void drawFontRow(TFT_eSPI& t, int w, int y, int hgt, const char* label,
+                        Settings::FontKind k, uint16_t labelColor) {
+    rowPanel(t, w, y, hgt);
+    int8_t lo, hi;
+    Theme::fontRange(t, k, lo, hi);
+    int8_t cur = Theme::fontDelta(k);
+    if (cur < lo) cur = lo;
+    if (cur > hi) cur = hi;
+    const SliderGeom g = sliderGeom(t, w, y, hgt);
+    if (Theme::fontHasFace(k)) {
+        t.drawRect(5, y + 2, g.minusX - 10, hgt - 4, labelColor);
+        t.setTextFont(Theme::fontSmooth(k) ? 2 : 1);
+        t.setTextSize(1);
+    } else {
+        sliderLabelFace(t);
+    }
+    t.setTextColor(labelColor, Theme::BG);
+    t.setCursor(8, y + (hgt - t.fontHeight()) / 2);
+    t.print(label);
+    t.setTextFont(1);
+
+    Theme::drawWin95Button(t, g.minusX, g.by, g.bw, g.bh, "-", false, true);
+    Theme::drawWin95Button(t, g.plusX,  g.by, g.bw, g.bh, "+", false, true);
+    const int cy = g.by + g.bh / 2;
+    t.fillRect(g.x0, cy - 1, g.x1 - g.x0 + 1, 3, Theme::PURPLE);
+    const int n = hi - lo;
+    for (int s = lo; s <= hi; s++) {
+        const int sx = n ? g.x0 + (g.x1 - g.x0) * (s - lo) / n : (g.x0 + g.x1) / 2;
+        const int tick = s == 0 ? g.bh / 2 - 1 : g.bh / 4;
+        t.fillRect(sx - 1, cy - tick, 3, 2 * tick + 1, s == 0 ? Theme::CYAN : Theme::PURPLE);
+    }
+    const int kx = n ? g.x0 + (g.x1 - g.x0) * (cur - lo) / n : (g.x0 + g.x1) / 2;
+    const int r = g.bh / 2 - 3 > 3 ? g.bh / 2 - 3 : 3;
+    t.fillCircle(kx, cy, r, Theme::VAPOR_PINK);
+    t.drawCircle(kx, cy, r, Theme::WHITE);
+}
+
 static void computeGeom(TFT_eSPI& t, int screenH, int& top, int& bodyBottom,
                         int& rowH, int& headerH, int& tallH) {
     top = TOP_MARGIN;
@@ -465,8 +856,7 @@ void uiSettingsInit(TFT_eSPI& t) {
     // visit -- carrying it across a fresh entry would drop you mid-list with
     // no idea why.
     s_page = SettingsPage::MAIN;
-    for (uint8_t i = 0; i < 5; i++) g_scrollFor[i] = 0;
-    for (uint8_t i = 0; i < 7; i++) s_folded[i] = false;
+    for (uint8_t i = 0; i < sizeof g_scrollFor / sizeof g_scrollFor[0]; i++) g_scrollFor[i] = 0;
     // Any pending question dies with the screen. Coming back to Settings and
     // finding a confirm panel still up from last time would be answering
     // something you no longer remember asking.
@@ -501,12 +891,6 @@ static const ConfirmText CONFIRMS[] = {
     { SettingsRow::RESET_STATS, "RESET STATS?",
       "Clears every detection total.",
       "Outfits earned by count re-lock.", "RESET" },
-    // The second line is the whole reason this row has a panel: boring mode
-    // hides every Squachy row, so the first thing it does is take away the
-    // OUTFIT row, and the way back is not obvious once it has.
-    { SettingsRow::BORING_MODE, "BORING MODE?",
-      "Hides Squachy and his rows,",
-      "OUTFIT included. Same row undoes.", "TURN ON" },
     { SettingsRow::REPLAY_INTRO, "REPLAY INTRO?",
       "Runs the first-boot walkthrough",
       "again, from the top.", "REPLAY" },
@@ -565,6 +949,17 @@ SettingsConfirmTap uiSettingsHitConfirm(int x, int y, int screenW, int screenH) 
     return SettingsConfirmTap::CANCEL;
 }
 
+// The two drawn buttons only, nothing around them: for the boards that aim a
+// cursor, where "outside the panel cancels" is a tap target nobody can see.
+SettingsConfirmTap uiSettingsConfirmButtonAt(int x, int y, int screenW, int screenH) {
+    if (s_confirmRow == SettingsRow::NONE) return SettingsConfirmTap::NONE;
+    int px, py, pw, ph, okX, okY, okW, okH, cnX, cnY, cnW, cnH;
+    settingsConfirmRects(screenW, screenH, px, py, pw, ph, okX, okY, okW, okH, cnX, cnY, cnW, cnH);
+    if (x >= okX && x <= okX + okW && y >= okY && y <= okY + okH) return SettingsConfirmTap::CONFIRM;
+    if (x >= cnX && x <= cnX + cnW && y >= cnY && y <= cnY + cnH) return SettingsConfirmTap::CANCEL;
+    return SettingsConfirmTap::NONE;
+}
+
 static void drawSettingsConfirm(TFT_eSPI& t, int w, int h) {
     const ConfirmText* ct = confirmTextFor(s_confirmRow);
     if (!ct) return;
@@ -607,6 +1002,13 @@ void uiSettingsOpenPage(SettingsPage p) {
 }
 
 SettingsPage uiSettingsCurrentPage() { return s_page; }
+SettingsPage uiSettingsParentPage() {
+    if (s_page == SettingsPage::FONTS || s_page == SettingsPage::ALERT_CARD) return SettingsPage::APPEARANCE;
+#if defined(TWATCH_S3)
+    if (s_page == SettingsPage::WARDRIVE) return SettingsPage::WATCH;   // its row is on WATCH SETTINGS
+#endif
+    return SettingsPage::MAIN;
+}
 
 void uiSettingsOpenAppearance(bool open) {
     uiSettingsOpenPage(open ? SettingsPage::APPEARANCE : SettingsPage::MAIN);
@@ -822,6 +1224,12 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
         case SettingsRow::CLOCK_BACKDROP:
             label = "CLOCK BG"; value = Settings::clockBackdropName();
             break;
+        case SettingsRow::CLOCK_FORMAT:
+            label = "CLOCK FORMAT"; value = Settings::clock24Hour() ? "24 HOUR" : "12 HOUR";
+            break;
+        case SettingsRow::DESK_ALERT:
+            label = "DESK ALERT"; value = Settings::deskAlertName();
+            break;
 #if SQUACH_MESH
         case SettingsRow::DESK_SQUAD:
             label = "SQUAD ON DESK"; value = Settings::deskSquad() ? "ON" : "OFF";
@@ -852,7 +1260,7 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             label = "ROTATION LOCK"; value = Settings::rotationLocked() ? "ON" : "OFF";
             break;
         case SettingsRow::BORING_MODE:
-            label = "BORING MODE"; value = Settings::boringMode() ? "ON" : "OFF";
+            label = "TERMINAL MODE"; value = Settings::boringMode() ? "ON" : "OFF";
             break;
         case SettingsRow::CONFIDENCE:
             label = "ALERT FILTER"; value = Settings::minConfidenceLabel();
@@ -877,7 +1285,12 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             // keeps the full name in its title bar.
             label = "TYPE FILTER";
             snprintf(valBuf, valBufN, "%u/%u", (unsigned)Settings::enabledTypeCount(),
-                     (unsigned)DetectionType::COUNT - 1);
+                     (unsigned)CATALOGUE_N);
+            value = valBuf;
+            break;
+        case SettingsRow::MY_ALERTS:
+            label = "MY ALERTS";
+            snprintf(valBuf, valBufN, "%u", (unsigned)MyAlerts::count());
             value = valBuf;
             break;
         case SettingsRow::IGNORED_DEVICES:
@@ -929,10 +1342,203 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
         case SettingsRow::WATCH_TEMP:
             label = "CHIP TEMP"; snprintf(valBuf, valBufN, "%d C", twatchChipC()); value = valBuf;
             break;
-        case SettingsRow::WATCH_XTAL:
-            label = "CLOCK CHECK"; twatchXtalLine(valBuf, valBufN); value = valBuf;
+        case SettingsRow::WARDRIVE_PAGE:
+        case SettingsRow::WATCH_WARDRIVE: {
+            // OFF, or what it is doing: finding the GPS, waiting for a fix, or
+            // logging, with how many sightings are kept.
+            label = "WARDRIVE";
+            const uint8_t g = twatchGpsState();
+            if (!Wardrive::enabled())  value = "OFF";
+            else if (g == 4)           value = "GPS RESTING";
+            else if (g <= 1)           value = "GPS STARTING";
+            else if (g == 2)           value = "NO FIX YET";
+            else { snprintf(valBuf, valBufN, "ON  %lu", (unsigned long)Wardrive::count()); value = valBuf; }
+            break;
+        }
+        case SettingsRow::WATCH_QUIET_TAGS:
+            label = "TAGS + RINGS"; value = Settings::quietTrackers() ? "LOG ONLY" : "ALERT";
             break;
 #endif
+        // The LoRa rows: the watch's and the T-Deck's (the T-Deck lists them on
+        // its SYSTEM page), so outside the watch-only block above -- inside it
+        // they fell through to "?" on the T-Deck (2026-10-13).
+#if SQUACH_LORA
+        case SettingsRow::WATCH_LORA:
+            label = "LORA"; value = Settings::loraListenName();
+            break;
+        case SettingsRow::WATCH_LORA_CHATS: {
+            label = "LORA CHATS";
+            const uint16_t u = uiLoraChatUnread();
+            if (u) { snprintf(valBuf, valBufN, "%u NEW", (unsigned)u); value = valBuf; }
+            else value = "OPEN";
+            break;
+        }
+        case SettingsRow::LORA_TX:
+            label = "LORA TX"; value = Settings::loraTxName();
+            break;
+#endif
+#if defined(CYD_GPS)
+        case SettingsRow::WARDRIVE_PAGE:
+        case SettingsRow::WATCH_WARDRIVE:
+            // OFF, or what stands between it and a row, or the rows written.
+            label = "WARDRIVE";
+            switch (Wardrive::sdState(millis())) {
+                case Wardrive::SdState::OFF:             value = "OFF"; break;
+                case Wardrive::SdState::NO_CARD:         value = "NO CARD"; break;
+                case Wardrive::SdState::LOW_MEMORY:      value = "LOW MEMORY"; break;
+#if defined(CARDPUTER_ADV)
+                // Why it is waiting: NO GPS, FINDING 3 SATS.
+                case Wardrive::SdState::WAITING_FOR_FIX: value = Gnss::status(millis(), valBuf, valBufN); break;
+#else
+                case Wardrive::SdState::WAITING_FOR_FIX: value = "WAITING FOR FIX"; break;
+#endif
+                case Wardrive::SdState::LOGGING:
+                    snprintf(valBuf, valBufN, "ON  %lu", (unsigned long)Wardrive::written());
+                    value = valBuf;
+                    break;
+            }
+            break;
+#endif
+#if defined(CARDPUTER_ADV) && defined(CYD_GPS)
+        case SettingsRow::WARDRIVE_SOUND:
+            label = "WARDRIVE SOUND"; value = Wardrive::soundOn() ? "ON" : "OFF";
+            break;
+#endif
+#if SQUACH_MESH
+        // ---- the FIELD JOURNAL ------------------------------------------------
+        case SettingsRow::JOURNAL:
+            label = "FIELD JOURNAL";
+            snprintf(valBuf, valBufN, "%u/%u MET", (unsigned)Encounters::kindsMet(), (unsigned)Encounters::Kind::COUNT);
+            value = valBuf;
+            break;
+        case SettingsRow::ENCOUNTERS:
+            // Named in full where it sits among other things.
+            label = s_page == SettingsPage::JOURNAL ? "ENCOUNTERS" : "RANDOM ENCOUNTERS"; value = Encounters::levelName();
+            break;
+        case SettingsRow::FREE_ROLL:
+            label = "FREE ROLL";
+            if (Encounters::level() == 0)      value = "OFF";
+            else if (Encounters::freeReady())  value = "READY";
+            else {
+                const unsigned m = Encounters::freeInMin();
+                snprintf(valBuf, valBufN, "IN %uH %02uM", m / 60, m % 60);
+                value = valBuf;
+            }
+            break;
+        case SettingsRow::JOURNAL_0: case SettingsRow::JOURNAL_1: case SettingsRow::JOURNAL_2:
+        case SettingsRow::JOURNAL_3: case SettingsRow::JOURNAL_4: case SettingsRow::JOURNAL_5:
+        case SettingsRow::JOURNAL_6: case SettingsRow::JOURNAL_7: case SettingsRow::JOURNAL_8:
+        case SettingsRow::JOURNAL_9: {
+            const Encounters::Kind k = (Encounters::Kind)((uint8_t)r - (uint8_t)SettingsRow::JOURNAL_0);
+            const uint16_t n = Encounters::met(k);
+            if (!n) {
+                label = "???";
+                value = Encounters::tierName(Encounters::tierOf(k));
+            } else {
+                label = Encounters::name(k);
+                char when[16] = "";
+                if (Encounters::firstEpoch(k)) Clock::formatEpochStamp(Encounters::firstEpoch(k), when, sizeof when);
+                const uint16_t sh = Encounters::shinies(k);
+                if (k == Encounters::Kind::ELDER && Encounters::photos())
+                    snprintf(valBuf, valBufN, "x%u  %u PHOTO%s", (unsigned)n, (unsigned)Encounters::photos(), Encounters::photos() == 1 ? "" : "S");
+                else if (sh)
+                    snprintf(valBuf, valBufN, "x%u  %s  *%u SHINY", (unsigned)n, when, (unsigned)sh);
+                else
+                    snprintf(valBuf, valBufN, "x%u  %s", (unsigned)n, when);
+                value = valBuf;
+            }
+            break;
+        }
+#endif
+#if defined(CYD_GPS) || defined(TWATCH_S3)
+        // ---- the WARDRIVE page ----------------------------------------------
+        case SettingsRow::WD_GPS:
+            label = "GPS";
+#if defined(TWATCH_S3)
+            {
+                const uint8_t g = twatchGpsState();
+                if (g == 0)      value = "OFF";
+                else if (g == 4) value = "RESTING";
+                else if (g == 1) value = "STARTING";
+                else             value = Gnss::status(millis(), valBuf, valBufN);
+            }
+#else
+            value = Gnss::status(millis(), valBuf, valBufN);
+#endif
+            break;
+        case SettingsRow::WD_COUNT:
+            label = "THIS DRIVE";
+            snprintf(valBuf, valBufN, "%lu WIFI  %lu BT",
+                     (unsigned long)Wardrive::writtenWifi(), (unsigned long)Wardrive::writtenBle());
+            value = valBuf;
+            break;
+        case SettingsRow::WD_KEPT:
+#if defined(CYD_GPS)
+            label = "FILE";
+            if (Wardrive::sdFileName()[0]) value = Wardrive::sdFileName() + 1;   // without the slash
+            else value = Wardrive::enabled() ? "AT THE FIRST FIX" : "NONE THIS DRIVE";
+#else
+            label = "KEPT";
+            snprintf(valBuf, valBufN, "%lu  %lu%% FULL", (unsigned long)Wardrive::count(),
+                     Wardrive::capacity() ? (unsigned long)((uint64_t)Wardrive::count() * 100 / Wardrive::capacity()) : 0UL);
+            value = valBuf;
+#endif
+            break;
+#if SQW_WIGLE_UPLOAD
+        case SettingsRow::WD_UPLOAD:
+            label = WigleUp::busy() ? "UPLOADING" : "UPLOAD NOW";
+            value = WigleUp::status(valBuf, valBufN);
+            break;
+        case SettingsRow::WD_AUTO:
+            label = "AUTO UPLOAD"; value = WigleUp::autoOn() ? "ON CHARGER" : "OFF";
+            break;
+        case SettingsRow::WD_KEY:
+            label = "WIGLE KEY";
+            if (WigleUp::hasKey()) value = WigleUp::keyName()[0] ? WigleUp::keyName() : "SET";
+            else value = "SET IT AT SQUACHWATCH.COM";
+            break;
+        case SettingsRow::WD_LAST: {
+            label = "LAST UPLOAD";
+            const uint32_t at = WigleUp::lastEpoch();
+            if (!at) value = "NEVER";
+            else {
+                char when[24];
+                Clock::formatEpochStamp(at, when, sizeof when);
+                snprintf(valBuf, valBufN, "%s  %lu", when, (unsigned long)WigleUp::lastRows());
+                value = valBuf;
+            }
+            break;
+        }
+#else
+        case SettingsRow::WD_WEB:
+            label = "UPLOAD";
+            value = "AT SQUACHWATCH.COM";
+            break;
+#endif
+#endif
+        case SettingsRow::EXT_SCREEN:
+            label = "EXT SCREEN"; value = Settings::extScreen() ? "ON" : "OFF";
+            break;
+        case SettingsRow::PRIVACY:
+            label = "PRIVACY MODE"; value = Settings::privacyMode() ? "ON" : "OFF";
+            break;
+#if defined(SENSE_CYD_APP)
+        case SettingsRow::SENSING:
+            label = "HUMAN SENSING"; value = ">";   // opens the screen
+            break;
+#endif
+        case SettingsRow::CHARGE_MODE:
+            label = "CHARGE MODE"; value = "START";
+            break;
+        case SettingsRow::LAST_RUN: {
+            // The boot before this one: how long it ran before it stopped.
+            label = "LAST RUN";
+            uint16_t b[2], m[2];
+            const uint8_t n = Settings::runHistory(b, m, 2);
+            if (n < 2) value = "--";
+            else { snprintf(valBuf, valBufN, "%uh %02um", (unsigned)(m[1] / 60), (unsigned)(m[1] % 60)); value = valBuf; }
+            break;
+        }
         case SettingsRow::POWER_SAVER:
             label = "POWER SAVER"; value = Settings::powerSaver() ? "ON" : "OFF";
             break;
@@ -1014,6 +1620,14 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             label = "BANTER";
             value = Settings::banterName();
             break;
+        case SettingsRow::DET_STYLE:
+            label = "DETECTIONS";
+            value = Settings::detXp() ? "XP" : "CLASSIC";
+            break;
+        case SettingsRow::LAVA_LAMP:
+            label = "LAVA LAMP";
+            value = Settings::lavaLamp() ? "ON" : "OFF";
+            break;
         case SettingsRow::VIEW_DIARY:
             label = "SQUACHY'S DIARY";
             break;
@@ -1024,6 +1638,10 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             value = bingoVal;
             break;
         }
+        case SettingsRow::CRYPTID_GUIDE:
+            label = "CRYPTID FIELD GUIDE";
+            value = Squachy::mothmanUnlocked() ? "1/1 >" : "0/1 >";
+            break;
         case SettingsRow::DEX: {
             label = "SQUACHY-DEX";
             static char dexVal[12];
@@ -1032,7 +1650,7 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             break;
         }
         case SettingsRow::DESK_MODE:
-            label = "DESK MODE";
+            label = "DESK SETTINGS";
             value = ">";
             break;
         case SettingsRow::RESET_STATS:
@@ -1047,6 +1665,28 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
         case SettingsRow::TOP_HAT:
             label = "TOP HAT"; value = Settings::topHatShown() ? "SHOWN" : "HIDDEN";
             break;
+        case SettingsRow::FONTS:
+            label = "FONTS"; value = ">";
+            break;
+        case SettingsRow::ALERT_CARD:
+            label = "ALERT CARD"; value = ">";
+            break;
+        case SettingsRow::ALERT_STYLE:
+            label = "STYLE"; value = AlertSkin::name(Settings::alertSkin());
+            break;
+        case SettingsRow::ALERT_MOTION:
+            label = "OPEN WITH ANIMATION"; value = Settings::alertAnimate() ? "YES" : "NO";
+            break;
+        case SettingsRow::ALERT_DESK:
+            label = "SUNSET BEHIND"; value = Settings::alertSunset() ? "YES" : "NO";
+            break;
+        case SettingsRow::FONT_MENUS:   label = "MENUS";   value = nullptr; break;
+        case SettingsRow::FONT_TEXT:    label = "TEXT";    value = nullptr; break;
+        case SettingsRow::FONT_BUTTONS: label = "BUTTONS"; value = nullptr; break;
+        case SettingsRow::FONT_BUBBLES: label = "BUBBLES"; value = nullptr; break;
+        case SettingsRow::FONT_XP:      label = "XP TILES"; value = nullptr; break;
+        case SettingsRow::FONT_PETS:    label = "PETS"; value = nullptr; break;
+        case SettingsRow::FONT_PREVIEW: label = "PREVIEW"; value = nullptr; break;
         case SettingsRow::BACK:
             label = "< BACK";
             break;
@@ -1107,8 +1747,12 @@ switch (Settings::background()) {
     const char* pageTitle = ">> SETTINGS <<";
     if (s_page == SettingsPage::APPEARANCE) pageTitle = ">> APPEARANCE <<";
     else if (s_page == SettingsPage::SYSTEM) pageTitle = ">> SYSTEM <<";
-    else if (s_page == SettingsPage::DESK)   pageTitle = ">> DESK MODE <<";
+    else if (s_page == SettingsPage::DESK)   pageTitle = ">> DESK SETTINGS <<";
     else if (s_page == SettingsPage::WATCH)  pageTitle = ">> WATCH SETTINGS <<";
+    else if (s_page == SettingsPage::FONTS)  pageTitle = ">> FONTS <<";
+    else if (s_page == SettingsPage::ALERT_CARD) pageTitle = ">> ALERT CARD <<";
+    else if (s_page == SettingsPage::WARDRIVE) pageTitle = ">> WARDRIVE <<";
+    else if (s_page == SettingsPage::JOURNAL) pageTitle = ">> FIELD JOURNAL <<";
     Theme::drawTitleBar(t, pageTitle);
 
     // +6, not +4: four group headers plus the two tracking rows.
@@ -1137,7 +1781,7 @@ switch (Settings::background()) {
             // value goes, rather than gone. See isSquachyOnlyRow().
             const bool off = Settings::boringMode() && isSquachyOnlyRow(items[idx].row);
             if (off) {
-                drawRow(t, w, y, itemH, label, "boring mode", false, Theme::W95_SHADOW, h > w);
+                drawRow(t, w, y, itemH, label, "terminal", false, Theme::W95_SHADOW, h > w);
             } else if (isTwoLineRow(items[idx].row)) {
                 drawTwoLineRow(t, w, y, itemH, label, value, groupColor(items[idx].group),
                                items[idx].row == SettingsRow::BACKGROUND ||
