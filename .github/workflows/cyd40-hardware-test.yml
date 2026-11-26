@@ -68,7 +68,9 @@ jobs:
                   if magic!=0x50aa: break
                   parts[label.split(b'\0',1)[0].decode()]=(off,size)
               assert all(parts.get(k)==v for k,v in expected.items()), (env,parts)
-              assert 0<(root/'firmware.bin').stat().st_size<=0x1e0000
+              size=(root/'firmware.bin').stat().st_size
+              print(f'{env}: binary={size:,} bytes, OTA slot={0x1e0000:,} bytes, remaining={0x1e0000-size:,}', flush=True)
+              assert 0<size<=0x1e0000, (env,size,0x1e0000)
               dest=Path('candidate')/env
               dest.mkdir(parents=True)
               for name in ('firmware.bin','bootloader.bin','partitions.bin'):

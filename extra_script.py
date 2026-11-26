@@ -43,6 +43,13 @@ env.Append(BUILD_FLAGS=['-DSQW_ENV=\\"%s\\"' % env["PIOENV"]])
 # a pre: script land before the framework's and lose). C accepts it too.
 env.Append(BUILD_FLAGS=["-fno-exceptions"])
 
+# CYD40 OTA slots are fixed at 0x1e0000. Test a smaller code-generation
+# strategy without dropping any features or changing the partition map.
+# Do not force smaller functions inline: repeated call sites can grow flash.
+# Explicit always_inline and hardware-specific attributes remain intact.
+if env["PIOENV"] in ("cyd40", "cyd40-fast"):
+    env.Append(BUILD_FLAGS=["-fno-inline-small-functions", "-fno-inline-functions"])
+
 # The Arduino core's own error lines (log_e: "nvs_open failed", "xSemaphore-
 # CreateMutex failed"...) off. They were on at the framework's default level,
 # 158 format strings and their call sites, 9 KB and more of flash on the
