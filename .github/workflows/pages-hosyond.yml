@@ -1,14 +1,12 @@
 name: Publish Hosyond Chrome Flasher
 
 on:
+  # Temporary test OTA: only changing this workflow triggers publication.
+  # Normal staging source pushes cannot publish untested firmware.
   push:
-    branches: [master]
+    branches: [sync/cyd40-hardware-test]
     paths:
-      - 'src/**'
-      - 'include/**'
-      - 'platformio.ini'
-      - 'extra_script.py'
-      - 'webflasher/**'
+      - '.github/workflows/pages-hosyond.yml'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +28,9 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: a3b1442a47c73e0b2041fe6019e5fb363c59e674
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -72,6 +73,16 @@ jobs:
         run: |
           mkdir -p _site/firmware/cyd40 _site/firmware/cyd40-fast
           cp webflasher/index.html _site/index.html
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('_site/index.html')
+          s=p.read_text()
+          notice='<div role="alert" style="padding:14px;background:#713f12;color:#fff;text-align:center;font:16px sans-serif">Temporary CYD40 hardware-test build — not yet validated on a physical device. Keep a USB recovery cable available.</div>'
+          s,n=re.subn(r'(<body\b[^>]*>)', lambda m:m.group(1)+notice, s, count=1, flags=re.I)
+          assert n == 1, 'Test banner could not be inserted'
+          p.write_text(s)
+          PY
           # A USB rescue must explicitly select app0. Without otadata, the
           # bootloader may still select a stale app1 from an earlier OTA.
           # boot_app0.bin resets only OTA-selection metadata at 0xE000; it
@@ -88,7 +99,7 @@ jobs:
           import json,sys
           d,env=sys.argv[1:]
           manifest={
-            "name":"SquachWatch Hosyond 4.0 ("+env+")",
+            "name":"SquachWatch Hosyond 4.0 HARDWARE TEST ("+env+")",
             "version":__import__("os").environ["SQW_VERSION"],
             "new_install_prompt_erase":True,
             "builds":[{
