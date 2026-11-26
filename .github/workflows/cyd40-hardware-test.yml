@@ -2,8 +2,6 @@ name: Hosyond CYD40 upstream migration - hardware test only
 on:
   push:
     branches: ['sync/cyd40-hardware-test']
-    paths:
-      - '.github/workflows/cyd40-hardware-test.yml'
   workflow_dispatch:
 permissions:
   contents: write
@@ -30,6 +28,10 @@ jobs:
           git remote add upstream https://github.com/skizzophrenic/SquachWatch-CYD.git
           git fetch --no-tags upstream master
           git cat-file -e "$UPSTREAM^{commit}"
+          if git merge-base --is-ancestor "$UPSTREAM" HEAD; then
+            echo "Pinned migration already recorded; compile the checked-out candidate."
+            exit 0
+          fi
           if ! git merge --no-ff --no-commit --no-edit "$UPSTREAM"; then
             git rev-parse --verify MERGE_HEAD
           fi

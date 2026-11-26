@@ -26,6 +26,7 @@ void consoleFrameShot();     // main.cpp: SENSE SHOT
 #include "ui_clear.h"    // PACE, the mascot step clock
 #include "draw_band.h"   // BAND, the 3.5in row gate
 #include "squachy.h"     // TEMPO, his durations
+#include "pet.h"         // Pet console commands
 #if defined(BENCH_TOOLS) && SQUACH_MESH
 #include "meshtalk.h"    // SQUAD JOIN / SAY / TEXT / EMOTE, for testing the phone app
 #endif
