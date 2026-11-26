@@ -3881,6 +3881,19 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         // Shafts, as a few nested spans per ray rather than one flat
         // band -- a single span gave each shaft a hard edge that the
         // quantisation then made into a visible rectangle.
+#if defined(CYD40)
+        if (d256 < 154) {
+            const uint8_t alpha = (uint8_t)((154-d256)*45/154);
+            const uint16_t base = ditherRGBi(t, baseR>>8, baseG>>8, baseB>>8, cell);
+            const uint16_t beam = blend(base, (uint16_t)0x75F9, alpha);
+            for (uint8_t i = 0; i < NRAY; i++) {
+                const int rc = (rayC256[i] + dd*77)>>8;
+                const int hw = ((int)(rayW[i]*256.0f)+dd*41)>>9;
+                const int xs = max(0, rc-hw), xe = min(w, rc+hw);
+                if (xe > xs) t.drawFastHLine(xs, y, xe-xs, beam);
+            }
+        }
+#else
         if (d256 < 154) {                                    // the top 60% of the tank
             const int fade256 = ((154 - d256) * 256 / 154) * 51 >> 8;   // (1 - d/0.6) x 0.20, x 256
             for (uint8_t i = 0; i < NRAY; i++) {
@@ -3901,6 +3914,7 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
                 }
             }
         }
+#endif
 
         // Vignette, as a smooth-ish falloff in five steps rather than
         // the three hard bands this used to draw.
@@ -4019,14 +4033,15 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
                                         (uint8_t)(22 + near * 88));
             t.drawFastHLine(0, y, w, sand);
 
-            const int v = (int)(z * 14.0f + sv) & (CAUSTIC_N - 1);
+            // Preserve the original period even for the compact CYD40 texture.
+            const int v = ((int)(z * 14.0f + sv) & 63) / (64 / CAUSTIC_N);
             // The per-pixel work in whole numbers: the row's perspective
             // scale x 256 for the tile lookup, and the row's brightness x 256
             // for the light. A float row, an integer pixel.
             const int zq  = (int)(z * 0.42f * 256.0f);
             const int lit = (int)(breathe * (0.45f + near * 0.55f) * 0.26f * 256.0f);
             for (int x = 0; x < w; x += 2) {
-                const int u = ((((x - w / 2) * zq) >> 8) + suI) & (CAUSTIC_N - 1);
+                const int u = (((((x - w / 2) * zq) >> 8) + suI) & 63) / (64 / CAUSTIC_N);
                 const uint8_t c = CAUSTIC_TILE[v * CAUSTIC_N + u];
                 if (c < 30) continue;
                 // Light reaching the floor falls off toward the back.
@@ -6951,6 +6966,25 @@ static void snowVictim(TFT_eSPI& t, int x, int y, uint32_t age, uint32_t now,
 // and the ordered dither only has to cover the gaps between them.
 static void snowAurora(TFT_eSPI& t, int w, int yStart, int bandH,
                        uint32_t now, float strength, uint16_t skyTop, uint16_t skyLow) {
+#if defined(CYD40)
+    // Compact animated ribbon: retain the aurora and its strength gate.
+    if (strength <= 0.02f) return;
+    const int hgt = bandH * 32 / 100;
+    if (hgt < 10) return;
+    const uint16_t hue = t.color565(64, 220, 110);
+    for (int r = 0; r < hgt; r += 2) {
+        const int y = yStart + 3 + r;
+        if (y + 1 >= yStart + bandH) break;
+        const int cx = w / 2 + (int)(sinf(r * 0.12f + now / 2600.0f) * 50.0f);
+        const int half = 24 + (hgt - abs(2*r - hgt)) * 36 / hgt;
+        const int x0 = max(0, cx - half), x1 = min(w, cx + half);
+        const int a = (int)(strength * 160.0f * (hgt - abs(2*r-hgt)) / hgt);
+        if (x1 > x0 && a > 3) {
+            const uint16_t sky = blend(skyTop, skyLow, (uint16_t)((y-yStart)*255/bandH));
+            t.fillRect(x0, y, x1-x0, 2, blend(sky, hue, (uint16_t)a));
+        }
+    }
+#else
     if (strength <= 0.02f) return;
     const int top = yStart + 3;
     const int hgt = (bandH * 32) / 100;
@@ -6997,6 +7031,7 @@ static void snowAurora(TFT_eSPI& t, int w, int yStart, int bandH,
             t.drawFastHLine(x0, y, x1 - x0, blend(sky, hue, (uint16_t)a));
         }
     }
+#endif
 }
 
 // The igloo on the slope, 24 wide and 13 tall, its base on the snow at
@@ -8907,6 +8942,14 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         // the beam does, and the moon's own colour at each pixel is worked out
         // from the same three craters it was drawn with.
         GS_MARK(1);
+#if defined(CYD40)
+        // Lower-detail layering: moon stays visible above the moving beams.
+        if (moonOn && (triOn[0] || triOn[1])) {
+            t.fillCircle(mx, my, mr, disc);
+            t.fillCircle(mx + mr / 3, my - mr / 3, mr / 4, crater);
+            t.fillCircle(mx - mr / 3, my + mr / 5, mr / 3, crater);
+        }
+#else
         if (moonOn && (triOn[0] || triOn[1])) {
             static const uint8_t TINT[3] = { 96, 66, 44 };   // core, middle, edge
             auto inside = [](const int* v, int px, int py) {
@@ -8962,6 +9005,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
                 }
             }
         }
+#endif
 
         // The rear skyline: thin towers with real gaps between them, standing
         // still far behind the corridor. It does not scroll -- at that distance
