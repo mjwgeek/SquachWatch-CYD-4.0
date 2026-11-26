@@ -190,7 +190,7 @@ jobs:
       - name: Archive complete signed site for recovery
         uses: actions/upload-artifact@v4
         with:
-          name: hosyond-signed-site-${ github.run_number }
+          name: hosyond-signed-site-${{ github.run_number }}
           path: _site/
           if-no-files-found: error
           retention-days: 30

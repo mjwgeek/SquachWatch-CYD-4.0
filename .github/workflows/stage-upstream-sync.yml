@@ -98,7 +98,7 @@ jobs:
       - name: Compile both CYD40 variants before promotion
         if: steps.sync.outputs.changed == 'true'
         env:
-          SQW_VERSION: 2.0.${ github.run_number }
+          SQW_VERSION: 2.0.${{ github.run_number }}
         run: pio run -e cyd40 -e cyd40-fast
       - name: Validate flash layout and dual-slot OTA fit
         if: steps.sync.outputs.changed == 'true'
@@ -127,7 +127,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.sync.outputs.changed == 'true'
         with:
-          name: upstream-sync-tested-cyd40-${ steps.sync.outputs.upstream }
+          name: upstream-sync-tested-cyd40-${{ steps.sync.outputs.upstream }}
           path: |
             .pio/build/cyd40/firmware.bin
             .pio/build/cyd40/bootloader.bin
@@ -144,8 +144,8 @@ jobs:
           git push origin HEAD:refs/heads/master
       - name: Explicitly dispatch Pages publishing or retry an unpublished sync
         env:
-          GH_TOKEN: ${ github.token }
-          CHANGED: ${ steps.sync.outputs.changed }
+          GH_TOKEN: ${{ github.token }}
+          CHANGED: ${{ steps.sync.outputs.changed }}
         shell: bash
         run: |
           set -euo pipefail
