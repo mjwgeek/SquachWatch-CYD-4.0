@@ -1864,3 +1864,50 @@ SettingsRow uiSettingsHitTest(TFT_eSPI& t, int x, int y, int screenW, int screen
     }
     return SettingsRow::NONE;
 }
+
+void uiSettingsSetFontPreview(uint8_t kind) {
+    if (kind < (uint8_t)Settings::FontKind::COUNT) s_previewKind = (Settings::FontKind)kind;
+}
+
+void uiSettingsFontTap(TFT_eSPI& t, int x, int y, int screenW, int screenH) {
+    int top, bodyBottom, rowH, headerH, tallH;
+    computeGeom(t, screenH, top, bodyBottom, rowH, headerH, tallH);
+    DisplayItem items[LIST_MAX_N + 7];
+    uint8_t n = buildDisplayList(items);
+    { const int m = maxScroll(items, n, top, bodyBottom, rowH, headerH, tallH);
+      if (g_scroll > m) g_scroll = m; }
+    int cy = top;
+    for (int idx = g_scroll; idx < n; idx++) {
+        const int itemH = itemHeight(items[idx], rowH, headerH, tallH);
+        if (cy + itemH > bodyBottom) break;
+        if (y >= cy && y < cy + itemH) {
+            if (items[idx].isHeader || !isFontRow(items[idx].row)) return;
+            const Settings::FontKind k = fontKindFor(items[idx].row);
+            int8_t lo, hi;
+            Theme::fontRange(t, k, lo, hi);
+            int cur = Theme::fontDelta(k);
+            if (cur < lo) cur = lo;
+            if (cur > hi) cur = hi;
+            const SliderGeom g = sliderGeom(t, screenW, cy, itemH);
+            // The buttons step; anywhere along the track jumps to the
+            // nearest stop -- a few pixels of slack either way.
+            if (x < g.minusX - 4) {                     // the label: the face, where it has one
+                if (Theme::fontHasFace(k)) { Theme::toggleFontFace(k); s_previewKind = k; }
+                return;
+            }
+            if (x < g.minusX + g.bw + 4)      cur--;
+            else if (x >= g.plusX - 4)        cur++;
+            else if (hi > lo) {
+                const int span = g.x1 - g.x0;
+                int px = x - g.x0;
+                if (px < 0) px = 0;
+                if (px > span) px = span;
+                cur = lo + (px * (hi - lo) + span / 2) / span;
+            }
+            Theme::setFontDelta(t, k, cur);
+            s_previewKind = k;
+            return;
+        }
+        cy += itemH;
+    }
+}
