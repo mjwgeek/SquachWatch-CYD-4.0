@@ -58,6 +58,8 @@ jobs:
           if test -n "$(git diff --name-only --diff-filter=U)"; then
             echo "::error::Upstream requires manual conflict resolution; master and Pages left untouched."
             git diff --name-only --diff-filter=U | tee "$RUNNER_TEMP/hosyond-conflicts.txt"
+            git diff --cc --no-color > "$RUNNER_TEMP/hosyond-conflict-hunks.patch"
+            git diff --cc --stat
             {
               echo '### Upstream sync blocked by conflicts'
               echo 'No source or firmware was published. Resolve these paths in a local merge:'
@@ -88,6 +90,16 @@ jobs:
           git commit -m "Merge upstream master for Hosyond CYD40 ($UPSTREAM)"
           git merge-base --is-ancestor "$BASE" HEAD
           git merge-base --is-ancestor "$UPSTREAM" HEAD
+      - name: Archive conflict report for targeted resolution
+        if: failure() && steps.sync.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosyond-upstream-conflict-report
+          path: |
+            ${{ runner.temp }}/hosyond-conflicts.txt
+            ${{ runner.temp }}/hosyond-conflict-hunks.patch
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/setup-python@v5
         if: steps.sync.outputs.changed == 'true'
         with:
