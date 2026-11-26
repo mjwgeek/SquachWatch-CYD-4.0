@@ -1,6 +1,8 @@
-name: Stage latest upstream safely
+name: Sync upstream and publish tested Hosyond firmware
 
 on:
+  schedule:
+    - cron: '17 */6 * * *'
   push:
     branches: [master]
     paths:
@@ -9,18 +11,26 @@ on:
 
 permissions:
   contents: write
+  actions: write
+
+concurrency:
+  group: hosyond-upstream-sync
+  cancel-in-progress: false
 
 jobs:
-  stage:
+  sync:
+    if: github.repository == 'mjwgeek/SquachWatch-CYD-4.0' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           ref: master
           fetch-depth: 0
           persist-credentials: true
-      - name: Stage merge without discarding fork-specific changes
+      - name: Merge upstream without discarding fork-specific changes
+        id: sync
+        shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -29,57 +39,132 @@ jobs:
           git fetch --no-tags squachwatch-upstream master
           BASE="$(git rev-parse HEAD)"
           UPSTREAM="$(git rev-parse FETCH_HEAD)"
-          echo "Fork base: $BASE"
-          echo "Upstream: $UPSTREAM"
-          git switch -c sync-upstream-v1.39.0
-          # Squash import: GitHub Actions cannot push the upstream workflow
-          # changes (the bot lacks workflow-edit permission), so import
-          # current upstream source without rewriting GitHub workflows.
-          # Preserve the fork's content at conflicting hunks.
-          git merge --squash -X ours FETCH_HEAD || true
-          conflicts="$(git diff --name-only --diff-filter=U)"
-          if test -n "$conflicts"; then
-            printf '%s\n' "$conflicts" | while IFS= read -r path; do
-              echo "PRESERVE FORK-SIDE CONFLICT: $path"
-              if git checkout --ours -- "$path"; then
-                git add -- "$path"
-              else
-                git rm -f --ignore-unmatch -- "$path"
-              fi
-            done
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "upstream=$UPSTREAM" >> "$GITHUB_OUTPUT"
+          echo "Fork: $BASE; upstream: $UPSTREAM"
+          if git merge-base --is-ancestor "$UPSTREAM" "$BASE"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No new upstream commits."
+            exit 0
           fi
-          test -z "$(git diff --name-only --diff-filter=U)"
-          git add -A
-          # Restore all fork-owned automation definitions, including this
-          # staging workflow; any new upstream workflow additions are removed.
-          git restore --source="$BASE" --staged --worktree -- .github/workflows
-          git commit -m "Sync upstream SquachWatch v1.39.0 code, retaining local workflow definitions"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          if ! git merge --no-ff --no-commit --no-edit "$UPSTREAM"; then
+            # A real merge must have started; never continue on other errors.
+            git rev-parse --verify MERGE_HEAD >/dev/null
+          fi
+          # These are intentionally fork-owned. Never import upstream CI or
+          # replace the public key that existing CYD40 radios trust.
+          git restore --source="$BASE" --staged --worktree -- .github/workflows include/ota_pubkey.h
+          if test -n "$(git diff --name-only --diff-filter=U)"; then
+            echo "::error::Upstream requires manual conflict resolution; master and Pages left untouched."
+            git diff --name-only --diff-filter=U | tee "$RUNNER_TEMP/hosyond-conflicts.txt"
+            {
+              echo '### Upstream sync blocked by conflicts'
+              echo 'No source or firmware was published. Resolve these paths in a local merge:'
+              echo '~~~'
+              cat "$RUNNER_TEMP/hosyond-conflicts.txt"
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # Detect accidental loss of critical fork-specific integrations.
+          for path in include/cyd40_user_setup.h include/board_audio.h src/board_audio.cpp \
+            src/ota_wifi.cpp src/ota_core.cpp include/ota_pubkey.h \
+            webflasher/index.html CYD40_WIFI_OTA.md HOSYOND_CYD40.md; do
+            test -s "$path"
+          done
+          grep -Fq '[env:cyd40]' platformio.ini
+          grep -Fq '[env:cyd40-fast]' platformio.ini
+          grep -Fq -- '-DCYD40=1' platformio.ini
+          grep -Fq 'boardBatteryChargingEstimated' src/main.cpp
+          grep -Fq 'boardBatteryChargingEstimated' src/ui_clear.cpp
+          grep -Fq 'BoardAudio::begin()' src/main.cpp
+          grep -Fq 'https://mjwgeek.github.io/SquachWatch-CYD-4.0/' src/ota_wifi.cpp
+          grep -Fq '#define OTA_PUBKEY_IS_TEST 0' include/ota_pubkey.h
+          # Pin the custom board definition and USB flasher UI to the fork.
+          # If an upstream change touches these, require human review.
+          git diff --cached --exit-code "$BASE" -- include/cyd40_user_setup.h \
+            include/board_audio.h src/board_audio.cpp webflasher/index.html include/ota_pubkey.h
+          git commit -m "Merge upstream master for Hosyond CYD40 ($UPSTREAM)"
           git merge-base --is-ancestor "$BASE" HEAD
-          git push origin HEAD:refs/heads/sync-upstream-v1.39.0
+          git merge-base --is-ancestor "$UPSTREAM" HEAD
       - uses: actions/setup-python@v5
+        if: steps.sync.outputs.changed == 'true'
         with:
           python-version: '3.11'
       - name: Install PlatformIO
+        if: steps.sync.outputs.changed == 'true'
         run: python -m pip install platformio
-      - name: Validate preserved Hosyond board files
+      - name: Compile both CYD40 variants before promotion
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          SQW_VERSION: 2.0.${ github.run_number }
+        run: pio run -e cyd40 -e cyd40-fast
+      - name: Validate flash layout and dual-slot OTA fit
+        if: steps.sync.outputs.changed == 'true'
         run: |
-          set -e
-          test -f include/cyd40_user_setup.h
-          test -f src/board_audio.cpp
-          test -f src/ui_clear.cpp
-          grep -q 'boardBatteryChargingEstimated' src/main.cpp
-          grep -q 'boardBatteryChargingEstimated' src/ui_clear.cpp
-          grep -q '^\[env:cyd40\]' platformio.ini
-          grep -q '^\[env:cyd40-fast\]' platformio.ini
-      - name: Build Hosyond CYD40 (standard)
-        run: pio run -e cyd40
-      - name: Build Hosyond CYD40 (fast)
-        run: pio run -e cyd40-fast
-      - name: Upload sync-tested firmware
-        uses: actions/upload-artifact@v4
+          python - <<'PY'
+          import struct
+          from pathlib import Path
+          expected = {'nvs': (0x9000, 0x5000), 'otadata': (0xe000, 0x2000),
+                      'app0': (0x10000, 0x1e0000), 'app1': (0x1f0000, 0x1e0000)}
+          for env in ('cyd40', 'cyd40-fast'):
+              root = Path('.pio/build') / env
+              for name in ('firmware.bin', 'bootloader.bin', 'partitions.bin'):
+                  assert (root / name).stat().st_size > 0, (env, name)
+              data = (root / 'partitions.bin').read_bytes()
+              parts = {}
+              for i in range(0, len(data) - 31, 32):
+                  magic, typ, sub, offset, size, label, flags = struct.unpack_from('<HBBII16sI', data, i)
+                  if magic != 0x50aa:
+                      break
+                  parts[label.split(b'\0', 1)[0].decode()] = (offset, size)
+              assert all(parts.get(k) == v for k, v in expected.items()), (env, parts)
+              size = (root / 'firmware.bin').stat().st_size
+              assert size <= min(parts['app0'][1], parts['app1'][1]), (env, size)
+              print(f'{env}: {size} bytes; expected dual-slot layout verified')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: steps.sync.outputs.changed == 'true'
         with:
-          name: squachwatch-v1.39-upstream-sync-hosyond-test
+          name: upstream-sync-tested-cyd40-${ steps.sync.outputs.upstream }
           path: |
             .pio/build/cyd40/firmware.bin
+            .pio/build/cyd40/bootloader.bin
+            .pio/build/cyd40/partitions.bin
             .pio/build/cyd40-fast/firmware.bin
+            .pio/build/cyd40-fast/bootloader.bin
+            .pio/build/cyd40-fast/partitions.bin
           if-no-files-found: error
+          retention-days: 30
+      - name: Promote tested merge to master (no force push)
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          git push origin HEAD:refs/heads/master
+      - name: Explicitly dispatch Pages publishing or retry an unpublished sync
+        env:
+          GH_TOKEN: ${ github.token }
+          CHANGED: ${ steps.sync.outputs.changed }
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$CHANGED" != true ]; then
+            if ! git log -1 --format=%s | grep -q '^Merge upstream master for Hosyond CYD40 ('; then
+              echo "Nothing to publish."
+              exit 0
+            fi
+            if gh run list --repo "$GITHUB_REPOSITORY" --workflow pages-hosyond.yml --branch master \
+                --limit 50 --json headSha,status,conclusion \
+                --jq ".[] | select(.headSha == \"$HEAD_SHA\" and (.status != \"completed\" or .conclusion == \"success\")) | .headSha" | grep -q "$HEAD_SHA"; then
+              echo "A successful or active publishing run already exists."
+              exit 0
+            fi
+          fi
+          # Ensure the dispatch will build the source just tested, not a
+          # concurrent, unreviewed master update.
+          REMOTE_SHA="$(git ls-remote origin refs/heads/master | cut -f1)"
+          test "$REMOTE_SHA" = "$HEAD_SHA"
+          gh workflow run pages-hosyond.yml --repo "$GITHUB_REPOSITORY" --ref master
+          echo "Publishing requested for $HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"

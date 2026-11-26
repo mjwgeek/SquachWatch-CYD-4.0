@@ -9,7 +9,6 @@ on:
       - 'platformio.ini'
       - 'extra_script.py'
       - 'webflasher/**'
-      - '.github/workflows/pages-hosyond.yml'
   workflow_dispatch:
 
 permissions:
@@ -38,6 +37,26 @@ jobs:
         run: python -m pip install platformio
       - name: Compile both variants (publishing blocked on failure)
         run: pio run -e cyd40 -e cyd40-fast
+      - name: Verify CYD40 partition layout and OTA image size
+        run: |
+          python - <<'PY'
+          import struct
+          from pathlib import Path
+          expected = {'nvs': (0x9000, 0x5000), 'otadata': (0xe000, 0x2000),
+                      'app0': (0x10000, 0x1e0000), 'app1': (0x1f0000, 0x1e0000)}
+          for env in ('cyd40', 'cyd40-fast'):
+              root = Path('.pio/build') / env
+              data = (root / 'partitions.bin').read_bytes()
+              parts = {}
+              for i in range(0, len(data) - 31, 32):
+                  magic, typ, sub, offset, size, label, flags = struct.unpack_from('<HBBII16sI', data, i)
+                  if magic != 0x50aa:
+                      break
+                  parts[label.split(b'\0', 1)[0].decode()] = (offset, size)
+              assert all(parts.get(k) == v for k, v in expected.items()), (env, parts)
+              size = (root / 'firmware.bin').stat().st_size
+              assert 0 < size <= min(parts['app0'][1], parts['app1'][1]), (env, size)
+          PY
       - name: Checkout LCDWiki board-only firmware source
         uses: actions/checkout@v4
         with:
@@ -143,8 +162,8 @@ jobs:
           OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
         run: |
           if [ -z "$OTA_SIGNING_KEY" ]; then
-            echo "::warning::OTA_SIGNING_KEY secret is missing; USB web flasher works, but Wi-Fi OTA is not enabled."
-            exit 0
+            echo "::error::OTA_SIGNING_KEY is missing; refusing to replace the existing signed OTA site."
+            exit 1
           fi
           umask 077
           printf '%s\n' "$OTA_SIGNING_KEY" > "$RUNNER_TEMP/cyd40_ota_key.pem"
@@ -168,6 +187,13 @@ jobs:
             cp "_site/firmware/$env/manifest.json" "_site/manifest-$env.json"
           done
           rm -f "$RUNNER_TEMP/cyd40_ota_key.pem" "$RUNNER_TEMP/cyd40_ota_pub.pem" "$RUNNER_TEMP/cyd40_public_point.bin"
+      - name: Archive complete signed site for recovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosyond-signed-site-${ github.run_number }
+          path: _site/
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
