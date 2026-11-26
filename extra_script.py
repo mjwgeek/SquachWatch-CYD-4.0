@@ -43,16 +43,6 @@ env.Append(BUILD_FLAGS=['-DSQW_ENV=\\"%s\\"' % env["PIOENV"]])
 # a pre: script land before the framework's and lose). C accepts it too.
 env.Append(BUILD_FLAGS=["-fno-exceptions"])
 
-# CYD40 hardware-test candidate: the no-inline trial grew the image.
-# Try whole-program size optimization instead, leaving the firmware features
-# and existing OTA partitions untouched. Fat objects preserve archive symbol
-# tables and native code for the pinned GCC 8 toolchain and its non-LTO libs.
-# Actual binary size is still checked by the staging workflow. Hardware
-# timing, IRAM paths and startup must be validated before any production use.
-if env["PIOENV"] in ("cyd40", "cyd40-fast"):
-    env.Append(BUILD_FLAGS=["-flto", "-ffat-lto-objects"])
-    env.Append(LINKFLAGS=["-flto=2", "-fuse-linker-plugin"])
-
 # The Arduino core's own error lines (log_e: "nvs_open failed", "xSemaphore-
 # CreateMutex failed"...) off. They were on at the framework's default level,
 # 158 format strings and their call sites, 9 KB and more of flash on the

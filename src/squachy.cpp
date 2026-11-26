@@ -5,19 +5,6 @@
 #include "signatures.h"
 #include "settings.h"
 
-#if defined(CYD40)
-// Keep the exact original float-to-integer conversion and truncation.
-// Share the multiply/conversion across the thousands of constant-coordinate
-// call sites rather than expanding it into each outfit and pose renderer.
-// This is a flash-size experiment; confirm actual frame timing on hardware.
-static __attribute__((noinline, noclone)) int cyd40ScalePixel(float scale, int v) {
-    return (int)(v * scale);
-}
-static __attribute__((noinline, noclone)) int cyd40ScalePixelF(float scale, float v) {
-    return (int)(v * scale);
-}
-#endif
-
 // ---- tempo ----
 // Squachy's behaviour is scheduled in milliseconds: how long a mood lasts,
 // how long a bubble stays, how often an idle gag fires, how long a drop or a
@@ -4309,11 +4296,7 @@ static void yzAcross(TFT_eSPI& t, int x0, int y0, int x1, int y1, int u0, int u1
 
 // One bell sleeve and its gold cuff, along an arm.
 static void yzSleeve(TFT_eSPI& t, int x0, int y0, int x1, int y1, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     yzAcross(t, x0, y0, x1, y1, 48, 88, S(4) + 1, S(6) + 1, TFT_BLACK);
     yzAcross(t, x0, y0, x1, y1, 50, 78, S(4), S(6) - 1, YZ_SLEEVE);
     yzAcross(t, x0, y0, x1, y1, 78, 86, S(6) - 1, S(6), YZ_GOLD);
@@ -4330,11 +4313,7 @@ static void yzMagic(Mood m, uint16_t& c, uint16_t& hi) {
 // Called twice: yzBack() draws whatever is on the far half of its orbit and
 // yzFront() whatever is on the near half, which is what puts him in the middle.
 static void yzOrbit(TFT_eSPI& t, int cx2, int hy, uint32_t now, Mood m, float scale, bool front) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     uint16_t mc, mh;
     yzMagic(m, mc, mh);
     if (m == Mood::SLEEPY) {
@@ -4369,11 +4348,7 @@ static void yzOrbit(TFT_eSPI& t, int cx2, int hy, uint32_t now, Mood m, float sc
 
 // Behind him: the rune circle on the floor, and the far half of the orbit.
 static void yzBack(TFT_eSPI& t, int cx2, int hy, int ground, uint32_t now, Mood m, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     s_yzGround = ground;
     uint16_t mc, mh;
     yzMagic(m, mc, mh);
@@ -4433,11 +4408,7 @@ static void yzBack(TFT_eSPI& t, int cx2, int hy, int ground, uint32_t now, Mood 
 
 // The robe: over the torso and legs, under the arms.
 static void yzRobe(TFT_eSPI& t, int cx2, int hy, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     s_yzHy = hy;
     const int th  = torsoHalf();
     const int top = hy + S(22);
@@ -4487,11 +4458,7 @@ static void yzRobe(TFT_eSPI& t, int cx2, int hy, float scale) {
 
 // After the arms, before the head: the sleeves, the collar, the epaulettes.
 static void yzBehindHead(TFT_eSPI& t, int cx2, int hh, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     // The sleeves, on the arms as they stand now. His head is drawn after
     // this and so covers an arm that goes up behind it, sleeve and all.
     s_yzArm[0][0] = s_armL0x; s_yzArm[0][1] = s_armL0y; s_yzArm[0][2] = s_armL1x; s_yzArm[0][3] = s_armL1y;
@@ -4535,11 +4502,7 @@ static void yzCone(TFT_eSPI& t, int cx, int hh, float scale, int ox, int oy, uin
 
 // Last of all, from drawOutfit(): hands, beard, hat, and the near magic.
 static void yzFront(TFT_eSPI& t, int cx2, int hh, uint32_t now, Mood m, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     const uint16_t ink = TFT_BLACK;
     uint16_t mc, mh;
     yzMagic(m, mc, mh);
@@ -4687,11 +4650,7 @@ static const int8_t O9_HAIR[8][6] = {
 
 // The short gi sleeve on his right arm, its hem torn in two places.
 static void o9Sleeve(TFT_eSPI& t, int x0, int y0, int x1, int y1, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     yzAcross(t, x0, y0, x1, y1, -6, 44, S(5) + 1, S(5) + 1, TFT_BLACK);
     yzAcross(t, x0, y0, x1, y1, -4, 42, S(5), S(5), O9_GI);
     yzAcross(t, x0, y0, x1, y1, 34, 42, S(5), S(5), O9_GIDK);
@@ -4700,11 +4659,7 @@ static void o9Sleeve(TFT_eSPI& t, int x0, int y0, int x1, int y1, float scale) {
 }
 
 static void o9Gi(TFT_eSPI& t, int cx2, int hy, int ground, uint32_t now, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     s_o9Hy = hy; s_o9Ground = ground; s_o9Now = now;
     const int th = torsoHalf();
     const int top = hy + S(22), by = hy + S(37);
@@ -4741,11 +4696,7 @@ static void o9Gi(TFT_eSPI& t, int cx2, int hy, int ground, uint32_t now, float s
 // After the arms, before the head: the right sleeve (the left one is torn
 // off), and the hair.
 static void o9BehindHead(TFT_eSPI& t, int cx2, int hh, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     s_o9Arm[0] = s_armR0x; s_o9Arm[1] = s_armR0y; s_o9Arm[2] = s_armR1x; s_o9Arm[3] = s_armR1y;
     o9Sleeve(t, s_o9Arm[0], s_o9Arm[1], s_o9Arm[2], s_o9Arm[3], scale);
 
@@ -4795,11 +4746,7 @@ static void o9BehindHead(TFT_eSPI& t, int cx2, int hh, float scale) {
 
 // Last of all, from drawOutfit(): wristbands, hands, the fringe, the static.
 static void o9Front(TFT_eSPI& t, int cx2, int hh, uint32_t now, Mood m, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     for (int8_t sg = -1; sg <= 1; sg += 2) {
         const int x0 = sg < 0 ? s_armL0x : s_armR0x, y0 = sg < 0 ? s_armL0y : s_armR0y;
         const int x1 = sg < 0 ? s_armL1x : s_armR1x, y1 = sg < 0 ? s_armL1y : s_armR1y;
@@ -4890,11 +4837,7 @@ static uint32_t scouterReading(uint32_t e) {
 
 static void drawScouter(TFT_eSPI& t, int cx2, int hh, uint32_t now, float scale) {
     if (!scouterOn(now)) return;
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     const uint32_t e = now - s_scoutStart;
     const int lx = cx2 + S(2), ly = hh + S(5), lw = S(11), lh = S(9);
     if (e < SCOUT_READ_MS + 150u) {
@@ -4962,11 +4905,7 @@ static void scouterTick(uint32_t now) {
 
 static void drawOutfit(TFT_eSPI& t, int cx2, int hy, uint32_t now, Mood m, float scale, OutfitId outfit) {
     if (outfit == OutfitId::NONE) return;
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     (void)m;
     using namespace Theme;
 
@@ -5270,11 +5209,7 @@ static void drawOutfit(TFT_eSPI& t, int cx2, int hy, uint32_t now, Mood m, float
             // helper macro, and a lambda by that name turns every call
             // site into "invalid cast from float to
             // const __FlashStringHelper*".
-            #if defined(CYD40)
-             auto Sf = [scale](float v) { return cyd40ScalePixelF(scale, v); };
-#else
-             auto Sf = [scale](float v) { return (int)(v * scale); };
-#endif
+            auto Sf = [scale](float v) { return (int)(v * scale); };
 
             // The whole mask sits a little lower on his head than the
             // skull's own geometry would put it. Two things wanted this at
@@ -6191,11 +6126,7 @@ static uint16_t auraKey(uint32_t now, Mood m) {
 }
 
 static void auraBack(TFT_eSPI& t, int cx2, int hy, int ground, uint32_t now, Mood m, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     const bool asleep = (m == Mood::SLEEPY), alarm = (m == Mood::SHOCKED);
     // Startled is one long surge; asleep there are none.
     const float surge = alarm ? 1.0f : (asleep ? 0.0f : auraSurge(now));
@@ -6352,11 +6283,7 @@ static void auraBack(TFT_eSPI& t, int cx2, int hy, int ground, uint32_t now, Moo
 // from a place hashed off the clock, for a tenth of a second; twice as often
 // while he is startled, never while he sleeps.
 static void auraFront(TFT_eSPI& t, int cx2, int hy, int ground, uint32_t now, Mood m, float scale) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     (void)ground;
     if (m == Mood::SLEEPY) return;
     const uint32_t per = (m == Mood::SHOCKED) ? 450u : 1900u;
@@ -6390,11 +6317,7 @@ static void auraFront(TFT_eSPI& t, int cx2, int hy, int ground, uint32_t now, Mo
 // chain goes, and only ours wears the chain.
 static void ankleCuff(TFT_eSPI& t, float scale, bool own);
 static void prisonStripes(TFT_eSPI& t, int cx2, int hy, float scale, uint16_t furMain, uint16_t furLight, bool own) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     // From the shoulders down -- or from his hands, when they are up in the
     // air: nothing but arms is drawn above his shoulders yet.
     int y0 = hy + S(22);
@@ -6496,11 +6419,7 @@ static void prisonStripes(TFT_eSPI& t, int cx2, int hy, float scale, uint16_t fu
 // The iron cuff on his right ankle, and its ring: worn in STRIPES, and
 // whenever the ball is his pet.
 static void ankleCuff(TFT_eSPI& t, float scale, bool own) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     {
         const int lx = s_footRx + S(1), lw = S(8);
         const int ch = S(1) > 2 ? S(1) + 1 : 2;
@@ -6518,11 +6437,7 @@ static void ankleCuff(TFT_eSPI& t, float scale, bool own) {
 
 static void drawBody(TFT_eSPI& t, int cx, int hy, int headTopY, uint32_t now, Mood m, float scale,
                      bool forceTalking = false, bool ownsBubble = true) {
-    #if defined(CYD40)
-    auto S = [scale](int v) { return cyd40ScalePixel(scale, v); };
-#else
     auto S = [scale](int v) { return (int)(v * scale); };
-#endif
     int cx2 = cx;
 
     // An emote's pose that moves the whole of him rather than only his arms:
