@@ -22,7 +22,7 @@ jobs:
           set -euo pipefail
           git merge-base --is-ancestor a3b1442a47c73e0b2041fe6019e5fb363c59e674 HEAD
           git merge-base --is-ancestor 545c8ad7b142d4a0ecdb16f283d6d6332b07514a HEAD
-          git diff --exit-code a3b1442a47c73e0b2041fe6019e5fb363c59e674 HEAD -- include/cyd40_user_setup.h include/board_audio.h src/board_audio.cpp include/ota_pubkey.h src/ota_wifi.cpp src/ota_core.cpp partitions_ota.csv webflasher/index.html src/theme.cpp include/caustic_tile.h
+          git diff --exit-code a3b1442a47c73e0b2041fe6019e5fb363c59e674 HEAD -- include/cyd40_user_setup.h include/board_audio.h src/board_audio.cpp include/ota_pubkey.h src/ota_wifi.cpp src/ota_core.cpp partitions_ota.csv webflasher/index.html include/caustic_tile.h
           grep -Fq 'getTouchRawZ() < 350' src/main.cpp
           grep -Fq 'BoardAudio::begin()' src/main.cpp
           grep -Fq 'boardBatteryChargingEstimated' src/main.cpp

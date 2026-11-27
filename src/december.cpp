@@ -37,6 +37,17 @@ const uint16_t FLAKE[3] = { 0xC69F, 0xE73F, 0xFFFF };
 // The desk clock's snow (theme.cpp, kind 2), over the whole screen, flakes
 // one to three pixels. `salt` gives the front layer flakes of its own.
 void snow(TFT_eSPI& t, uint32_t now, int w, int h, uint32_t salt) {
+#if defined(CYD40)
+    if (w <= 0 || h <= 0) return;
+    for (int i = 0; i < 24; ++i) {
+        const uint32_t hs = hsh32((uint32_t)(i + salt) * 40503U + 7U);
+        const int depth = i % 3;
+        const int fy = (int)((now / (uint32_t)(125 - depth * 35) + (hs >> 4)) % (uint32_t)(h + 4)) - 2;
+        const int fx = (int)((hs >> 12) % (uint32_t)w);
+        t.fillRect(fx, fy, depth + 1, depth + 1, FLAKE[depth]);
+    }
+#else
+
     if (w <= 0 || h <= 0) return;
     const int N = 30;
     for (int i = 0; i < N; i++) {
@@ -49,6 +60,7 @@ void snow(TFT_eSPI& t, uint32_t now, int w, int h, uint32_t salt) {
         if (fx < 0) fx += w; else if (fx >= w) fx -= w;
         t.fillRect(fx, fy, layer + 1, layer + 1, FLAKE[layer]);
     }
+#endif
 }
 
 // The flare: the bulb the advert count lands on lights white for a moment
@@ -56,6 +68,29 @@ void snow(TFT_eSPI& t, uint32_t now, int w, int h, uint32_t salt) {
 uint32_t s_advLast = 0, s_advAt = 0;
 
 void lights(TFT_eSPI& t, uint32_t now, int w, int top) {
+#if defined(CYD40)
+    static const DetectionType kinds[6] = { DetectionType::FLOCK, DetectionType::META, DetectionType::DRONE,
+        DetectionType::CAMERA, DetectionType::AIRTAG, DetectionType::RING };
+    const uint32_t adv = advertsSeen();
+    if (adv != s_advLast) { s_advLast = adv; s_advAt = now; }
+    const int span = w / 3;
+    for (int s = 0; s < 3; ++s) {
+        int px = s * span, py = top;
+        for (int i = 1; i <= 10; ++i) {
+            const int x = s * span + span * i / 10;
+            const int y = top + i * (10 - i) / 2;
+            t.drawLine(px, py, x, y, 0x1A45);
+            if (i < 10) {
+                const int k = s * 9 + i - 1;
+                const bool flare = now - s_advAt < 350 && (uint32_t)k == adv % 27U;
+                const bool on = (k + now / 200U) % 3U != 0;
+                t.fillRect(x - 1, y + 1, 3, 4, flare ? 0xFFFF : on ? Theme::colorFor(kinds[k % 6]) : 0x3986);
+            }
+            px = x; py = y;
+        }
+    }
+#else
+
     static const DetectionType KINDS[6] = {
         DetectionType::FLOCK, DetectionType::META, DetectionType::DRONE,
         DetectionType::CAMERA, DetectionType::AIRTAG, DetectionType::RING,
@@ -92,15 +127,24 @@ void lights(TFT_eSPI& t, uint32_t now, int w, int top) {
             px = x; py = y;
         }
     }
+#endif
 }
 
 // A drift along the floor, its height per column from two sine waves.
 void drift(TFT_eSPI& t, int w, int floorY) {
+#if defined(CYD40)
+    for (int x = 0; x < w; x += 4) {
+        const int h = 3 + (x / 4) % 5;
+        t.fillRect(x, floorY - h, 4, h, 0xF7BF);
+    }
+#else
+
     for (int x = 0; x < w; x += 2) {
         const int hgt = (int)lroundf(4.0f + 2.0f * sinf(x * 0.05f) + 1.5f * sinf(x * 0.13f + 1.0f));
         t.fillRect(x, floorY - hgt, 2, hgt, 0xF7BF);
         t.fillRect(x, floorY - hgt, 2, 1, 0xFFFF);
     }
+#endif
 }
 
 }  // namespace
@@ -143,6 +187,16 @@ void front(TFT_eSPI& t, uint32_t now, int w, int top, int floorY) {
 // swinging bobble, a white rolled brim. Inked like the outfits: every part
 // once in black a pixel out each way, then in its colour.
 void hat(TFT_eSPI& t, int cx, int hy, uint32_t now, float scale) {
+#if defined(CYD40)
+    const int u = (int)(scale * 16.0f);
+    const int tipX = cx + (19 * u / 16) + (int)((now / 300U) % 3U) - 1;
+    const int tipY = hy - 5 * u / 16;
+    t.fillTriangle(cx - 14*u/16, hy, cx + 13*u/16, hy, cx + 3*u/16, hy - 15*u/16, 0xD8A3);
+    t.fillTriangle(cx - u/16, hy - 12*u/16, cx + 7*u/16, hy - 14*u/16, tipX, tipY, 0xD8A3);
+    t.fillRoundRect(cx - 17*u/16, hy - 2*u/16, 34*u/16, 7*u/16, 2, 0xFFFF);
+    t.fillCircle(tipX, tipY, max(1, 3*u/16), 0xFFFF);
+#else
+
     auto S = [scale](int v) { return (int)(v * scale); };
     const uint16_t ink = 0x0000, red = 0xD8A3, redD = 0x9000, wh = 0xFFFF, grey = 0xB5B6;
     const float sw = sinf((float)now / 380.0f);
@@ -164,6 +218,7 @@ void hat(TFT_eSPI& t, int cx, int hy, uint32_t now, float scale) {
         t.fillCircle(tx + ox, ty + oy, br, c);
     }
     t.fillRect(cx - S(16), hy + S(3), S(32), S(1) > 0 ? S(1) : 1, grey);
+#endif
 }
 
 // ---- the HOLIDAY MODE card -------------------------------------------------
@@ -202,6 +257,10 @@ void cardDraw(TFT_eSPI& t, uint32_t now) {
     t.fillRoundRect(x, y, cardW(), cardH(), 6, Theme::BG);
     t.drawRoundRect(x, y, cardW(), cardH(), 6, red);
     t.drawRoundRect(x + 1, y + 1, cardW() - 2, cardH() - 2, 5, green);
+#if defined(CYD40)
+    for (int i = 0; i < cardW() / 16; ++i)
+        t.fillRect(x + 8 + i * 16, y - 1, 3, 4, ((i + now / 250U) % 3U) ? green : red);
+#else
     // A strand of bulbs along the top edge, chasing like the ones outside.
     static const uint16_t BULB[4] = { 0xD8A3, 0x2E8A, 0xFEA0, 0x4D1F };
     const int n = cardW() / 16;
@@ -211,6 +270,7 @@ void cardDraw(TFT_eSPI& t, uint32_t now) {
         t.fillRect(bx, y - 2, 3, 1, 0x2945);
         t.fillRect(bx, y - 1, 3, 4, on ? BULB[i % 4] : 0x3986);
     }
+#endif
     t.setTextWrap(false);
     t.setTextSize(Theme::upSize(2));
     const char* head = "HOLIDAY MODE!";

@@ -2267,6 +2267,10 @@ void drawStarfield(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         // different hue. Pushing toward magenta and raising the value puts
         // red on a level that quantisation keeps: (146,0,170), which reads
         // as purple against the (0,0,255) rings.
+#if defined(CYD40)
+        const uint16_t col = blend((i & 1) ? (uint16_t)0x001F : (uint16_t)0x901F, BG, (uint16_t)(d*150.0f));
+        const int lw = 1;
+#else
         float rr, gg, bb;
         if (i & 1) hsv2rgb(0.66f + drift, 1.0f, 1.00f - d * 0.62f, rr, gg, bb);
         else       hsv2rgb(0.80f + drift, 1.0f, 0.72f - d * 0.42f, rr, gg, bb);
@@ -2274,6 +2278,7 @@ void drawStarfield(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
                                         (uint8_t)(gg * 255.0f),
                                         (uint8_t)(bb * 255.0f));
         const int lw = (int)(4.2f * (1.0f - d));
+#endif
         const float rot = spin;
 
         int px = cx + (int)(cosf(rot) * r);
@@ -2339,6 +2344,11 @@ void drawStarfield(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         const int   ox = (int)px_[i];
         const int   oy = (int)py_[i];
         if (oy - R < yStart || oy + R >= yEnd) continue;
+#if defined(CYD40)
+        const uint8_t* p = PAL[ppal[i]];
+        t.fillCircle(ox, oy, R, t.color565(p[0],p[1],p[2]));
+        t.fillCircle(ox-R/4, oy-R/4, max(1,R/2), t.color565(p[3],p[4],p[5]));
+#else
         const uint8_t* p = PAL[ppal[i]];
         for (int dy = -R; dy <= R; dy++) {
             const int hw = (int)sqrtf((float)(R * R - dy * dy));
@@ -2354,6 +2364,7 @@ void drawStarfield(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
                 t.drawFastHLine(ox + hw - sw, oy + dy, sw, dark);
             }
         }
+#endif
     }
 
     // ---- junk ------------------------------------------------------------
@@ -7081,6 +7092,26 @@ static void snowIgloo(TFT_eSPI& t, int x, int gy, uint32_t now, uint16_t lit, ui
 // varying independently reads as a building with people in it.
 static void snowLodge(TFT_eSPI& t, int x, int ridgeY, uint32_t now,
                       float dawn, uint16_t haze) {
+#if defined(CYD40)
+    const uint16_t wood = blend((uint16_t)0x51C5,haze,60);
+    const uint16_t roof = blend((uint16_t)0xEF9F,haze,40);
+    t.fillRect(x-17,ridgeY-13,34,13,wood);
+    t.fillRect(x-12,ridgeY-22,24,9,wood);
+    t.fillRect(x-20,ridgeY-17,40,4,roof);
+    t.fillRect(x-15,ridgeY-26,30,4,roof);
+    static const int8_t wx[5]={-13,-3,7,-8,3}, wy[5]={-9,-9,-9,-20,-20};
+    for (int i=0;i<5;++i) {
+        const bool on=i<lodgeKnocks() || ((now/(6000U+i*1900U)+i)%4U)!=0;
+        t.fillRect(x+wx[i],ridgeY+wy[i],5,5,on ? blend((uint16_t)0xFDEB,wood,(uint16_t)(dawn*160.0f)) : (uint16_t)0x3123);
+    }
+    t.fillRect(x+12,ridgeY-8,5,8,0x3123);
+    t.fillRect(x-9,ridgeY-32,4,7,wood);
+    for (int i=0;i<3;++i) {
+        const int age=(now/250U+i*5U)%15U;
+        t.fillRect(x-7+age/2,ridgeY-34-age,2,2,blend(haze,WHITE,70));
+    }
+#else
+
     const uint16_t beam  = blend((uint16_t)0x51C5, haze, 60);
     const uint16_t beamD = blend((uint16_t)0x3123, haze, 60);
     const uint16_t roof  = blend((uint16_t)0xEF9F, haze, 40);
@@ -7160,6 +7191,7 @@ static void snowLodge(TFT_eSPI& t, int x, int ridgeY, uint32_t now,
         if (sy < 2) continue;
         t.fillRect(sx, sy, 2 + (int)ag, 2, blend(haze, WHITE, (uint16_t)(90 - ag * 18.0f)));
     }
+#endif
 }
 
 // A rider who has just lost it. Three beats: the tumble, where his gear
@@ -7227,6 +7259,22 @@ static void snowWreck(TFT_eSPI& t, int x, int y, uint32_t age, uint8_t kind, uin
 
 static void snowPine(TFT_eSPI& t, int x, int y, int h, bool snowy, uint16_t haze, uint16_t mix,
                      float bend = 0.0f, uint8_t load = 0) {
+#if defined(CYD40)
+    if (h < 8) return;
+    const uint16_t bark = blend((uint16_t)0x61E3, haze, mix);
+    const uint16_t green = blend((uint16_t)0x1BE2, haze, mix);
+    const uint16_t dark = blend((uint16_t)0x09E1, haze, mix);
+    const uint16_t snow = blend((uint16_t)0xEFBF, haze, mix);
+    t.fillRect(x - 2, y - h/5, 4, h/5, bark);
+    for (int i = 0; i < 3; ++i) {
+        const int by = y - h*(20 + i*24)/100;
+        const int hw = h*(30 - i*7)/100;
+        const int bx = x + (int)(bend * (i + 1));
+        t.fillTriangle(bx-hw,by,bx+hw,by,bx,by-h*37/100, i == 0 ? dark : green);
+        if (snowy && hw > 3) t.drawFastHLine(bx-hw/2,by-2,hw*(128+(int)load)/256,snow);
+    }
+#else
+
     if (h < 8) return;
     // Blue kept under 30 on every green: this panel quantises blue to
     // 0/85/170/255, so anything near 42 rounds UP and the tree lands on
@@ -7325,6 +7373,7 @@ static void snowPine(TFT_eSPI& t, int x, int y, int h, bool snowy, uint16_t haze
     t.fillRect(lx - 1, y - h - 2, 3, 5, lt);
     t.fillRect(lx - 1, y - h - 2, 1, 5, tip);
     if (load > 110) t.fillRect(lx - 1, y - h - 3, 3, 1, snow);
+#endif
 }
 
 static void snowSkier(TFT_eSPI& t, int x, int y, int8_t carve, uint8_t trick,
